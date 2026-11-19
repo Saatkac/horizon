@@ -1,0 +1,54 @@
+name: launcher (Linux only)
+
+# Builds horizon-launcher for Linux x86_64 and uploads it as an artifact. A trimmed copy of the
+# Linux job in launcher.yml for a fork: no release, no signing, no other platform.
+on:
+  workflow_dispatch:
+  push:
+    branches: ['launcher-offline-ui']
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: launcher
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: launcher
+          shared-key: launcher-linux
+      - name: Linux libraries GPUI links to
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev \
+            libfontconfig-dev libvulkan-dev libasound2-dev patchelf
+      - name: The offline profile tests, and the translations
+        run: |
+          cargo test --release --locked offline:: -- --nocapture
+          cargo test --release --locked i18n::
+      - run: cargo build --release --locked
+      - name: The version, and the offline commands
+        run: |
+          ./target/release/horizon-launcher --version
+          ./target/release/horizon-launcher account offline --help
+      - name: Package
+        run: |
+          mkdir -p out dist
+          cp target/release/horizon-launcher dist/
+          (cd dist && tar czf ../out/horizon-launcher-linux-x86_64.tar.gz horizon-launcher)
+          ls -lh out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: horizon-launcher-linux-x86_64
+          path: launcher/out/*
+          retention-days: 14
