@@ -127,12 +127,14 @@ pub fn download(
             log(format!("Downloading the sounds ({} files)", objects.len()));
             // A connection that fails now and then is tried again, and a file that still fails
             // does not stop the others: the next download fetches what is left.
+            // As the game's files: a dropped connection (often mid-body) is asked for again.
             let retrying = |url: &str| {
                 let mut got = fetch(url);
-                for _ in 0..2 {
+                for wait in RETRY_WAITS {
                     if got.is_ok() {
                         break;
                     }
+                    std::thread::sleep(wait);
                     got = fetch(url);
                 }
                 got
@@ -363,6 +365,9 @@ fn fetch_file(fetch: Fetch, file: &File) -> Result<Vec<u8>, String> {
 
 /// Downloads the files not already there, `jobs` at a time, with a line every second; stops at
 /// the first error, or between files once `cancel` is set.
+/// The waits between tries of one file whose connection dropped: a second, then three.
+const RETRY_WAITS: [Duration; 2] = [Duration::from_secs(1), Duration::from_secs(3)];
+
 fn fetch_all(
     files: &[File],
     jobs: usize,
@@ -402,9 +407,22 @@ fn fetch_each(
                             break;
                         }
                         if sha1_file(&file.path).as_ref() != Some(&file.sha1) {
-                            let got = fetch_file(fetch, file)
+                            // Mojang's CDN drops a connection now and then — most often while
+                            // the body is being read, as a TLS stream that ends without its
+                            // close_notify. The whole file is asked for again a few times
+                            // before it counts as failed; a file is only ever written whole.
+                            let mut got = fetch_file(fetch, file)
                                 .map_err(|e| format!("{} {e}", file.url))
                                 .and_then(|body| write_file(&file.path, &body));
+                            for wait in RETRY_WAITS {
+                                if got.is_ok() || cancel.load(Relaxed) {
+                                    break;
+                                }
+                                std::thread::sleep(wait);
+                                got = fetch_file(fetch, file)
+                                    .map_err(|e| format!("{} {e}", file.url))
+                                    .and_then(|body| write_file(&file.path, &body));
+                            }
                             if let Err(e) = got {
                                 errors.fetch_add(1, Relaxed);
                                 failed.lock().unwrap().get_or_insert(e);

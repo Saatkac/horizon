@@ -198,7 +198,44 @@ pub fn set_preference(reduce: Option<bool>) {
     PREFERENCE.store(v, std::sync::atomic::Ordering::Relaxed);
 }
 
+/// When the player last did something (a pointer move, a key, a click), for the ambient
+/// animation: a launcher nobody touches drops to one frame a second, on battery too.
+static EPOCH: LazyLock<Instant> = LazyLock::new(Instant::now);
+static LAST_INPUT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// The UI saw input now: the ambient animation goes back to its normal rate.
+pub fn note_activity() {
+    let at = EPOCH.elapsed().as_millis().min(u64::MAX as u128) as u64;
+    LAST_INPUT.store(at, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// How long the UI has been still.
+pub fn idle_for() -> Duration {
+    let at = LAST_INPUT.load(std::sync::atomic::Ordering::Relaxed);
+    EPOCH
+        .elapsed()
+        .saturating_sub(Duration::from_millis(at))
+}
+
+/// Whether the ambient animation may be slow (one frame a second): nothing happened for
+/// [`IDLE_AFTER`].
+pub fn idle() -> bool {
+    idle_for() >= IDLE_AFTER
+}
+
+/// How long without input the ambient animation slows to one frame a second.
+const IDLE_AFTER: Duration = Duration::from_secs(8);
+
 pub fn motion() -> Motion {
+    // The launcher is still unless a recording asks for the moving sky
+    // (`HORIZON_LAUNCHER_MOTION=always`): every animation here redraws the window, and a
+    // player watching Play or Settings wants the page, not drifting clouds.
+    static MOVING: LazyLock<bool> = LazyLock::new(|| {
+        std::env::var("HORIZON_LAUNCHER_MOTION").as_deref() == Ok("always")
+    });
+    if !*MOVING {
+        return Motion::Still;
+    }
     static FORCED: LazyLock<Option<Motion>> =
         LazyLock::new(
             || match std::env::var("HORIZON_LAUNCHER_MOTION").as_deref() {
@@ -490,8 +527,13 @@ impl Sky {
             if let (Some(since), Motion::InFront) = (self.unfocused, motion()) {
                 soonest = soonest.min((UNFOCUSED - (now - since)).as_secs_f32());
             }
-            // A little after the change, so the frame's clock is surely past it.
-            Duration::from_secs_f32(soonest.max(0.) + 0.005)
+            // A little after the change, so the frame's clock is surely past it; and on a
+            // launcher nobody touches, never sooner than a second.
+            let mut next = Duration::from_secs_f32(soonest.max(0.) + 0.005);
+            if idle() {
+                next = next.max(Duration::from_secs(1));
+            }
+            next
         });
         (sky, next)
     }

@@ -667,6 +667,7 @@ impl Launcher {
         let network = section(5).child(self.proxy_row(n, cx));
         let game = section(4)
             .child(self.game_architecture_row(n, cx))
+            .child(self.download_without_account_row(cx))
             .child(self.game_args_row(n + 1, cx))
             .child(self.mods_auto_update_row(cx));
         let ai = section(8)

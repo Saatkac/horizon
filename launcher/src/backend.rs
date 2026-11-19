@@ -2171,9 +2171,22 @@ fn download_for(
             "\n  • No signed-in account owns Minecraft: Java Edition, so Horizon can't download it."
                 .into(),
         ),
+        Err(_) if crate::backend::Settings::load().download_without_account() => {
+            log(format!(
+                "Downloading {v} from Mojang without an account (the player turned the \
+                 ownership check off)"
+            ));
+            let os = match sources::Os::current() {
+                sources::Os::Linux => "linux",
+                sources::Os::MacOs => "osx",
+                sources::Os::Windows => "windows",
+            };
+            mojang::download(pins, dir, os, 8, fetch, &mojang::CANCEL, log)
+                .map_err(|e| format!("\n  • Horizon tried to download {v} from Mojang, but: {e}"))
+        }
         Err(_) => Err(crate::i18n::trf(
             "\n  • Sign in with a Microsoft account that owns Minecraft: Java Edition to download \
-             {version} from Mojang.",
+             {version} from Mojang, or turn on “Download without an account” in Settings › Game.",
             &[("version", v)],
         )),
     }
@@ -4317,6 +4330,11 @@ pub struct Settings {
     /// move even when the system asks for less.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reduce_motion: Option<bool>,
+    /// Download Minecraft's files from Mojang without a Microsoft account. Mojang's files are
+    /// public HTTP; Horizon asks for an account that owns the game as policy, and a player
+    /// without one can turn that policy off here. Off (unset) by default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub download_without_account: Option<bool>,
 }
 
 impl Settings {
@@ -4412,6 +4430,18 @@ impl Settings {
     /// Whether the cheaper scene is on ([`performance`](Self::performance)).
     pub fn performance(&self) -> bool {
         self.performance.unwrap_or(false)
+    }
+
+    /// Whether to download the game's files without an account that owns it. On by default in
+    /// this build: its player plays offline, and Mojang's files are public downloads anyway.
+    /// `HORIZON_DOWNLOAD_WITHOUT_ACCOUNT=0` turns it off for a run.
+    pub fn download_without_account(&self) -> bool {
+        match std::env::var_os("HORIZON_DOWNLOAD_WITHOUT_ACCOUNT").as_deref() {
+            Some(v) if v == "0" => return false,
+            Some(_) => return true,
+            None => {}
+        }
+        self.download_without_account.unwrap_or(true)
     }
     /// Registry mods update by themselves ([`Settings::mods_auto_update`]): on unless turned off.
     pub fn auto_updates_mods(&self) -> bool {

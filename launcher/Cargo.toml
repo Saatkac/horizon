@@ -8,6 +8,9 @@ description = "Downloads, prepares and starts Horizon builds"
 [workspace]
 
 [dependencies]
+# The allocator the game uses: GPUI builds and drops a great many small boxes per frame, and
+# mimalloc holds that pattern steady where the system allocator fragments and slows down.
+mimalloc = { version = "0.1", default-features = false }
 horizon-mod-point-emit = { path = "../crates/horizon-mod-point-emit" }
 horizon-addresses = { path = "../crates/horizon-addresses" }
 # Reads the object members out of the mods' rlibs for the API route's C link (`native_mods/api_route.rs`).

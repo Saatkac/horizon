@@ -577,6 +577,35 @@ impl Launcher {
 
     /// The Performance mode row: the cheaper scene for older computers (a quarter-resolution
     /// sky, a box blur, resizes baked in the background, no frame per mouse move).
+    /// Settings' "Download without an account": Mojang's files need no account technically;
+    /// Horizon asks for one as policy, and this turns the policy off.
+    pub(super) fn download_without_account_row(&mut self, cx: &mut Context<Self>) -> Div {
+        let t = self.theme;
+        let on = self.settings.download_without_account();
+        ui::setting_row(
+            tr("Download Minecraft without an account"),
+            Some(
+                div()
+                    .child(tr(
+                        "Mojang's files are public downloads. Horizon normally asks for a \
+                         Microsoft account that owns Minecraft: turn this on to download them \
+                         without signing in, for example for an offline profile.",
+                    ))
+                    .into_any_element(),
+            ),
+            Some(
+                crate::switch("download-without-account", on, &t)
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.settings.download_without_account =
+                            Some(!this.settings.download_without_account());
+                        this.save_settings();
+                        cx.notify();
+                    }))
+                    .into_any_element(),
+            ),
+        )
+    }
+
     pub(super) fn performance_row(&mut self, cx: &mut Context<Self>) -> Div {
         let t = self.theme;
         let on = self.settings.performance();

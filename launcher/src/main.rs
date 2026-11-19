@@ -4,6 +4,10 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
 use horizon_launcher_scenery::{art, glass, rain, scene, sky};
+
+/// Every allocation in the launcher, and every frame's small boxes, through mimalloc.
+#[global_allocator]
+static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 mod blocks_chrome;
 mod blocks_play;
 mod blocks_settings;
@@ -75,7 +79,6 @@ mod new_instance;
 mod notes_cache;
 mod owner_page;
 mod packs_page;
-mod partner;
 mod perf;
 mod picture_cache;
 mod plate;
@@ -178,11 +181,12 @@ impl Page {
 
     /// The pages the top bar shows: all but Settings, and the Wardrobe and the Shop only when
     /// `wardrobe` (`Launcher::wardrobe_shown`).
-    fn in_top_bar(wardrobe: bool) -> impl Iterator<Item = (Page, &'static str, &'static str)> {
-        Self::ALL.into_iter().filter(move |(page, ..)| match page {
-            Page::Settings => false,
-            Page::Wardrobe | Page::Shop => wardrobe,
-            _ => true,
+    /// The pages in the top bar. The Wardrobe and the Shop (Horizon's cosmetics store) are not:
+    /// they are advertising of a thing this build does not need, and their pages fetch and draw
+    /// for nothing. Settings is a button in the rail.
+    fn in_top_bar(_wardrobe: bool) -> impl Iterator<Item = (Page, &'static str, &'static str)> {
+        Self::ALL.into_iter().filter(|(page, ..)| {
+            !matches!(page, Page::Settings | Page::Wardrobe | Page::Shop)
         })
     }
 }

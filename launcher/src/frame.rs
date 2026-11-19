@@ -71,10 +71,6 @@ const RAIL_MOTION: horizon_theme::Motion = horizon_theme::Motion {
     ms: 320,
     curve: [0.22, 0.9, 0.3, 1.08],
 };
-/// Discord's own blurple, in every theme, and under the pointer.
-const DISCORD: u32 = 0x5865F2;
-const DISCORD_HOVER: u32 = 0x4752C4;
-
 /// The rail's state: whether the pointer is on it, and where its last opening or shutting began.
 #[derive(Default)]
 pub struct Rail {
@@ -679,84 +675,8 @@ impl Launcher {
         };
         if open {
             foot = foot.children(self.rail_update_card(soft, cx));
-            // Sculk's card (a sponsor), only where the rail is wide enough to show it.
-            // When the instances already overflow the rail, the list keeps the room.
-            if !self.settings.partner_hidden && p > 0.98 && !overflows {
-                let free = f32::from(window.viewport_size().height) - 420. - 52. * rows as f32;
-                let mut side = div().relative().mb(px(6.)).child(partner::card(
-                    "partner-side",
-                    RAIL_OPEN - 24.,
-                    free < partner::TALL_HEIGHT,
-                    &t,
-                ));
-                if self.settings.partner_seen_secs >= partner::SEEN_BEFORE_HIDE {
-                    side = side.child(partner::hide_button("partner-hide", &t).on_click(
-                        cx.listener(|this, _: &ClickEvent, _, cx| {
-                            this.settings.partner_hidden = true;
-                            this.save_settings();
-                            cx.notify();
-                        }),
-                    ));
-                }
-                foot = foot.child(side);
-            }
-        }
-
-        // Discord keeps its own blurple in every theme, as the icon at rest and the fill under the
-        // pointer, so it never reads as the selected page. No pulse.
-        if !self.links.discord.is_empty() {
-            let url = self.links.discord.clone();
-            let did = SharedString::from("discord");
-            let hovered = crate::hover_is(&did);
-            foot = foot.child(keyboard(
-                track_hover(
-                    div()
-                        .id(did.clone())
-                        .relative()
-                        .flex()
-                        .flex_none()
-                        .items_center()
-                        .gap(px(12.))
-                        .w_full()
-                        .h(px(42.))
-                        .mb(px(4.))
-                        .px(px(17.5))
-                        .rounded(px(radius::ROW))
-                        .when(hovered, |d| d.bg(ui::color(DISCORD_HOVER)))
-                        .cursor_pointer()
-                        .child(ui::icon(
-                            "discord",
-                            19.,
-                            if hovered {
-                                gpui::white()
-                            } else {
-                                ui::color(DISCORD)
-                            },
-                        ))
-                        .child(
-                            fade(ui::text(14., FontWeight::SEMIBOLD, 1.))
-                                .text_color(if hovered {
-                                    gpui::white()
-                                } else {
-                                    white(ink::STRONG)
-                                })
-                                .whitespace_nowrap()
-                                .child(tr("Join the Discord")),
-                        )
-                        .when(!open, |d| d.tooltip(ui::tip(tr("Join the Discord"))))
-                        .on_click(move |_, _, cx| cx.open_url(&url)),
-                    did,
-                ),
-                &t,
-            ));
         }
         let links = [
-            (
-                "sponsor",
-                tr("Sponsor"),
-                "favourite",
-                self.links.sponsor.clone(),
-            ),
             ("roadmap", tr("Roadmap"), "map", self.links.roadmap.clone()),
             ("docs", tr("Documentation"), "book", self.links.docs.clone()),
             (

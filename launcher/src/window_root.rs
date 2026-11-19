@@ -16,6 +16,8 @@ pub struct Back {
     pub rains: bool,
     /// The sunset dimmed behind the work, away from Home.
     pub dim: bool,
+    /// A plain black window: no scene, no sky, no rain behind the launcher.
+    pub plain: bool,
 }
 
 pub struct Backdrop {
@@ -54,6 +56,12 @@ impl Render for Backdrop {
         let Some(b) = self.back else {
             return back;
         };
+        // A plain black window: the animated sunset, the painted skies and the rain are all
+        // gone, so nothing behind the launcher redraws itself. It is the calmest look and the
+        // cheapest frame there is (the scenery views are never rendered at all).
+        if b.plain {
+            return back.bg(gpui::rgb(0x000000));
+        }
         back = back.bg(b.side);
         back = if b.sunset {
             back.child(self.scene.clone())
@@ -61,16 +69,6 @@ impl Render for Backdrop {
             back.child(self.sky.clone())
         };
         back.when(b.rains, |d| d.child(self.rain.clone()))
-            .when(b.dim, |d| {
-                d.child(
-                    div()
-                        .absolute()
-                        .top_0()
-                        .left_0()
-                        .size_full()
-                        .bg(gpui::black().opacity(0.38)),
-                )
-            })
     }
 }
 

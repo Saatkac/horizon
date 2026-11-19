@@ -61,6 +61,12 @@ const TICK_SETTLED: Duration = Duration::from_millis(92);
 /// is a mood, not motion, so it stretches to a quarter of the pointer's rate. Every frame of
 /// this view redraws the whole window, which is what keeps a slow laptop warm.
 const TICK_SETTLED_CHEAP: Duration = Duration::from_millis(160);
+/// The tick once the pointer has been still for [`ACTIVE`]: the drift alone is left, and a
+/// launcher nobody is touching has no reason to redraw thirty times a second. One frame a
+/// second keeps the stars and clouds alive on a laptop's battery.
+const TICK_IDLE: Duration = Duration::from_millis(1000);
+/// How long after the last pointer movement the scene counts as idle.
+const ACTIVE: Duration = Duration::from_secs(8);
 /// How long the scene keeps moving after the window loses focus.
 const UNFOCUSED: Duration = Duration::from_secs(10);
 
@@ -812,6 +818,8 @@ pub struct Scene {
     view: (f64, f64),
     target: (f64, f64),
     last: Option<Instant>,
+    /// When the pointer last moved: the frame rate falls to [`TICK_IDLE`] after [`ACTIVE`].
+    activity: Option<Instant>,
     /// The frame timer in flight, if any.
     waking: bool,
     /// The accent's tint (the mockup's `mix-blend-mode: color` layer); none for the violet.
@@ -846,6 +854,7 @@ impl Scene {
             view: (0., 0.),
             target: (0., 0.),
             last: None,
+            activity: None,
             waking: false,
             tint: None,
             blur: horizon_theme::glass::BLUR,
@@ -921,6 +930,7 @@ impl Scene {
         if motion() == Motion::Still {
             return;
         }
+        self.activity = Some(Instant::now());
         let w = f64::from(f32::from(window.width)).max(1.);
         let h = f64::from(f32::from(window.height)).max(1.);
         self.target = (
@@ -1052,7 +1062,20 @@ impl Render for Scene {
             } else {
                 TICK_SETTLED
             };
-            self.wake(if settling { TICK } else { settled }, cx);
+            // A launcher nobody has touched for a while needs no smooth frame: the drift is a
+            // mood, and one frame a second still shows it. Any pointer movement brings the
+            // normal rate back at once (`point`).
+            let idle = self
+                .activity
+                .is_none_or(|at| now.saturating_duration_since(at) >= ACTIVE);
+            let after = if settling {
+                TICK
+            } else if idle {
+                TICK_IDLE
+            } else {
+                settled
+            };
+            self.wake(after, cx);
         }
 
         let baked = self.baked.as_ref().expect("baked above");

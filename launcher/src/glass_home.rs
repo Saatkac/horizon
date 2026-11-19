@@ -362,6 +362,7 @@ impl Launcher {
         // A soft dark scrim keeps the line readable over the brightest sky (a low sun, snow).
         // The line alone; the player counts the launcher knows sit under it, quieter, so the
         // hero reads as one sentence and the numbers stay there for whoever looks for them.
+        let playing_wanted = self.playing.is_some() || self.official_players.is_some();
         let counts = div()
             .flex()
             .flex_wrap()
@@ -386,7 +387,7 @@ impl Launcher {
                     .gap(px(4.))
                     .child(line),
             )
-            .when(self.playing.is_some() || self.official_players.is_some(), |d| {
+            .when(playing_wanted, |d| {
                 d.child(
                     ui::text(12.5, FontWeight::NORMAL, 0.55)
                         .mt(px(2.))

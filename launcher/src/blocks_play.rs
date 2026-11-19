@@ -168,24 +168,49 @@ impl Launcher {
                 cx.notify();
             }));
         }
-        // An offline profile has no account to download from Mojang with: only the player's own
-        // install prepares it.
         let prepare = match first {
-            Some(true) if offline_only && no_install => div().child(
-                button("prepare-choose-folder", "Choose Minecraft's folder", Kind::Secondary, &t)
+            // An offline profile downloads from Mojang directly (public files), or takes
+            // another launcher's install: either way the page is never a dead end.
+            Some(true) if offline_only => div()
+                .flex()
+                .flex_wrap()
+                .gap(px(8.))
+                // The files come from Mojang when no install has them: a public download, which
+                // this build no longer ties to an account that owns the game.
+                .child(
+                    button("prepare-download", "Download and prepare", Kind::Secondary, &t)
+                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                            this.prepare(backend::MinecraftFrom::Install);
+                            cx.notify();
+                        })),
+                )
+                .child(
+                    button("prepare-install", "From my install", Kind::Ghost, &t).on_click(
+                        cx.listener(|this, _: &ClickEvent, _, cx| {
+                            this.prepare(backend::MinecraftFrom::Install);
+                            cx.notify();
+                        }),
+                    ),
+                )
+                .child(
+                    button("prepare-choose-folder", "Choose Minecraft's folder", Kind::Ghost, &t)
+                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                            this.go(Page::Settings);
+                            cx.notify();
+                        })),
+                )
+                .child(
+                    button(
+                        "prepare-sign-in-download",
+                        "Sign in and download",
+                        Kind::Ghost,
+                        &t,
+                    )
                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                        this.go(Page::Settings);
+                        this.sign_in_to_play();
                         cx.notify();
                     })),
-            ),
-            Some(true) if offline_only => div().child(
-                button("prepare-install", "From my install", Kind::Secondary, &t).on_click(
-                    cx.listener(|this, _: &ClickEvent, _, cx| {
-                        this.prepare(backend::MinecraftFrom::Install);
-                        cx.notify();
-                    }),
                 ),
-            ),
             Some(true) if no_install => div().child(
                 button(
                     "prepare-download",

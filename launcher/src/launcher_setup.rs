@@ -12,38 +12,18 @@ impl Launcher {
             cx.notify();
         });
         let window_handle = window.window_handle();
+        // Messages from the workers (progress, installs, the game's log) and the periodic checks.
+        // 200 ms is quick enough that a download's bar still moves smoothly, and it wakes the
+        // app a third as often as 80 ms did: on a laptop that is the difference between a core
+        // that stays in a low power state and one that keeps waking for nothing.
         cx.spawn(async move |this, cx| loop {
             cx.background_executor()
-                .timer(Duration::from_millis(80))
+                .timer(Duration::from_millis(200))
                 .await;
             if this
                 .update(cx, |this, cx| this.drain(window_handle, cx))
                 .is_err()
             {
-                break;
-            }
-        })
-        .detach();
-        // Counts the time a partner banner is on screen, until it may be hidden.
-        cx.spawn(async move |this, cx| loop {
-            cx.background_executor()
-                .timer(Duration::from_secs(10))
-                .await;
-            let counting = this.update(cx, |this, cx| {
-                let s = &mut this.settings;
-                if s.partner_hidden || s.partner_seen_secs >= partner::SEEN_BEFORE_HIDE {
-                    return false;
-                }
-                // On screen on every page: the card in the sidebar, the banner on Servers.
-                s.partner_seen_secs += 10;
-                if s.partner_seen_secs % 60 == 0 || s.partner_seen_secs >= partner::SEEN_BEFORE_HIDE
-                {
-                    this.save_settings();
-                    cx.notify();
-                }
-                true
-            });
-            if !matches!(counting, Ok(true)) {
                 break;
             }
         })
@@ -109,15 +89,9 @@ impl Launcher {
             sheet_size: None,
             mods_sticky: sticky::Sticky::default(),
             long_list: cull::Cull::default(),
-            opening: (!settings.skip_opening && !settings.performance()).then(|| {
-                let focus = cx.focus_handle();
-                window.focus(&focus, cx);
-                Opening {
-                    started: None,
-                    reveal: None,
-                    focus,
-                }
-            }),
+            // No opening animation, ever: the wordmark arriving letter by letter costs a run of
+            // full-window frames before anything a player asked for is on screen.
+            opening: None,
             updates: Updates::default(),
             checked: None,
             update_error: None,
@@ -346,7 +320,8 @@ impl Launcher {
         this.fetch_startup_releases();
         this.mods_auto_update();
         this.fetch_links();
-        this.watch_shop(cx);
+        // No shop: the cosmetics store's page is gone from the top bar, so nothing asks the
+        // service about it (a request and a half-hour timer for a page no player can open).
         if home::getting_ready_preview() {
             this.preparing = true;
             this.play_when_prepared = this
@@ -378,11 +353,9 @@ impl Launcher {
         {
             this.wardrobe_preview();
         }
-        // What the game and the launcher kept, if the player allows it and there is a server.
+        // No telemetry loop and no player-count polling: both are network requests on a timer
+        // for numbers Home only decorates with. Nothing of the player's leaves this build.
         this.mod_preview_from_env();
-        telemetry::send_in_background();
-        telemetry::watch_playing(this.tx.clone());
-        telemetry::watch_official(this.tx.clone());
         this
     }
 

@@ -31,10 +31,9 @@ impl Render for Launcher {
         // Performance mode's plates are solid: no glass, no blur, nothing sampled from the scene.
         // So are an OLED theme's, over its own black sky.
         let sunset = self.theme.glass && self.theme.dark && self.theme.scene;
-        glass::set_plain(
-            performance || (self.theme.dark && !self.theme.scene),
-            self.theme.edge,
-        );
+        // Always: the window behind the launcher is black, so there is nothing to frost, sample
+        // or blur. The plates are solid, drawn in one pass.
+        glass::set_plain(true, self.theme.edge);
         // Reduced motion (the player's or the system's) holds GPUI's own animations too.
         sky::set_preference(self.settings.reduce_motion);
         cx.set_reduce_motion(motion::still());
@@ -132,6 +131,9 @@ impl Render for Launcher {
                 rains,
                 // The sunset is Home's scenery; elsewhere it is dimmed behind the work.
                 dim: sunset && self.page != Page::Play,
+                // Black, always: the scenery is the launcher's most expensive frame and the
+                // least of what a player came for.
+                plain: true,
             },
         };
         if self.pushed != Some(pushed) {
