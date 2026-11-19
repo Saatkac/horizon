@@ -6,24 +6,42 @@ use horizon_world::worldgen::mod_density_functions::{
 use mod_api::{DensityFunction, DensityFunctionType};
 use std::sync::Arc;
 
+/// A mod's type. Every call into the mod's code is contained: a panic comes back as an error,
+/// which the engine reports with the type's id, instead of ending the game from a worldgen worker.
 struct TypeAdapter(Arc<dyn DensityFunctionType>);
 impl ModDensityFunctionType for TypeAdapter {
     fn decode(&self, json: &str) -> Result<Arc<dyn ModDensityFunction>, String> {
-        let function = self.0.decode(json)?;
-        Ok(Arc::new(FunctionAdapter(function)))
+        let decoded = horizon_client::crash::contain(|| {
+            let function = self.0.decode(json)?;
+            // Asked once, here, so that the engine never calls them again.
+            let range = function.range();
+            let varies_with_y = function.varies_with_y();
+            Ok::<_, String>(FunctionAdapter {
+                function,
+                range,
+                varies_with_y,
+            })
+        });
+        let adapter = decoded.map_err(|panic| format!("decoding panicked: {panic}"))??;
+        Ok(Arc::new(adapter))
     }
 }
 
-struct FunctionAdapter(Arc<dyn DensityFunction>);
+struct FunctionAdapter {
+    function: Arc<dyn DensityFunction>,
+    range: [f32; 2],
+    varies_with_y: bool,
+}
 impl ModDensityFunction for FunctionAdapter {
     fn range(&self) -> [f32; 2] {
-        self.0.range()
+        self.range
     }
     fn varies_with_y(&self) -> bool {
-        self.0.varies_with_y()
+        self.varies_with_y
     }
-    fn sample(&self, position: [i32; 3], seed: i64) -> f32 {
-        self.0.sample(position, seed)
+    fn sample(&self, position: [i32; 3], seed: i64) -> Result<f32, String> {
+        horizon_client::crash::contain(|| self.function.sample(position, seed))
+            .map_err(|panic| format!("sample panicked: {panic}"))
     }
     fn fill(
         &self,
@@ -32,8 +50,9 @@ impl ModDensityFunction for FunctionAdapter {
         count: [usize; 3],
         seed: i64,
         out: &mut [f32],
-    ) {
-        self.0.fill(origin, step, count, seed, out);
+    ) -> Result<(), String> {
+        horizon_client::crash::contain(|| self.function.fill(origin, step, count, seed, out))
+            .map_err(|panic| format!("fill panicked: {panic}"))
     }
 }
 
@@ -102,12 +121,78 @@ mod tests {
             .unwrap();
         assert_eq!(tilt.range(), [-1e6, 1e6]);
         assert!(!tilt.varies_with_y());
-        assert_eq!(tilt.sample([3, 70, -4], 5), 11.0);
+        assert_eq!(tilt.sample([3, 70, -4], 5), Ok(11.0));
         let mut out = [0.0; 4];
-        tilt.fill([-1, 0, 0], [4, 8, 1], [2, 2, 1], 0, &mut out);
+        tilt.fill([-1, 0, 0], [4, 8, 1], [2, 2, 1], 0, &mut out)
+            .unwrap();
         assert_eq!(out, [-2.0, -2.0, 6.0, 6.0]);
         let refused = types["test:tilt"].decode(r#"{"type":"test:tilt"}"#);
         assert_eq!(refused.err().as_deref(), Some("no slope"));
+    }
+
+    /// `{"type": "test:breaks", "in": "decode" | "range" | "fill"}`: panics there.
+    struct Breaks;
+    struct Broken;
+    impl DensityFunctionType for Breaks {
+        fn decode(&self, json: &str) -> Result<Arc<dyn DensityFunction>, String> {
+            let value: serde_json::Value = serde_json::from_str(json).map_err(|e| e.to_string())?;
+            match value["in"].as_str() {
+                Some("decode") => panic!("bad plates"),
+                Some("range") => Ok(Arc::new(BrokenRange)),
+                _ => Ok(Arc::new(Broken)),
+            }
+        }
+    }
+    impl DensityFunction for Broken {
+        fn range(&self) -> [f32; 2] {
+            [0.0, 1.0]
+        }
+        fn sample(&self, _: [i32; 3], _: i64) -> f32 {
+            panic!("bad sample")
+        }
+        fn fill(&self, _: [i32; 3], _: [i32; 3], _: [usize; 3], _: i64, _: &mut [f32]) {
+            panic!("bad fill")
+        }
+    }
+    struct BrokenRange;
+    impl DensityFunction for BrokenRange {
+        fn range(&self) -> [f32; 2] {
+            panic!("bad range")
+        }
+        fn sample(&self, _: [i32; 3], _: i64) -> f32 {
+            0.0
+        }
+    }
+
+    /// A panic in the mod's code comes back as an error with its message, on this thread: the
+    /// decoder's turns into a load error naming the type, `fill`'s into a failed chunk.
+    #[test]
+    fn a_panicking_mod_function_is_an_error_not_a_crash() {
+        let breaks = TypeAdapter(Arc::new(Breaks));
+        let decoded = breaks.decode(r#"{"in":"decode"}"#);
+        let error = decoded.err().expect("decode refused");
+        assert!(
+            error.starts_with("decoding panicked:") && error.contains("bad plates"),
+            "{error}"
+        );
+        let error = breaks
+            .decode(r#"{"in":"range"}"#)
+            .err()
+            .expect("range refused");
+        assert!(error.contains("bad range"), "{error}");
+        let broken = breaks.decode(r#"{"in":"fill"}"#).unwrap();
+        let error = broken.sample([0, 0, 0], 0).unwrap_err();
+        assert!(
+            error.starts_with("sample panicked:") && error.contains("bad sample"),
+            "{error}"
+        );
+        let error = broken
+            .fill([0; 3], [1; 3], [1; 3], 0, &mut [0.0])
+            .unwrap_err();
+        assert!(
+            error.starts_with("fill panicked:") && error.contains("bad fill"),
+            "{error}"
+        );
     }
 
     /// Each type a mod may not register is refused at startup, naming the mod.

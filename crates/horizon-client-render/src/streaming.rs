@@ -24,6 +24,8 @@ use std::{
 /// How long a worker waits with nothing to do before it gives back its
 /// generator's scratch buffers ([`ChunkGenerator::idle`]).
 pub const IDLE_RELEASE: std::time::Duration = std::time::Duration::from_secs(5);
+/// How long a column whose generation failed waits before it is generated again.
+pub const RETRY_FAILED_GENERATION: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Worker CPU time and job counts by kind, for benchmarks
 /// (`examples/gen_light_bench.rs`). Off unless enabled: a relaxed load per
@@ -101,6 +103,12 @@ pub trait ChunkGenerator: Send + Sync + 'static {
     /// next to each other in a run. Results do not change.
     fn all_idle(&self) {}
     fn proto(&self, worker: &mut Self::Worker, x: i32, z: i32) -> Proto;
+    /// Whether generating `proto` failed (a mod's density function failed): it holds
+    /// nothing to decorate, finish or save, so the column stays ungenerated and is tried
+    /// again after [`RETRY_FAILED_GENERATION`].
+    fn proto_failed(&self, _proto: &Proto) -> bool {
+        false
+    }
     fn decorates(&self) -> bool {
         false
     }
@@ -318,6 +326,8 @@ pub enum Done {
     Generated(Chunk),
     /// A proto chunk, and whether it was decorated (loaded so from the save).
     Proto(i32, i32, Proto, bool),
+    /// A column whose generation failed (`ChunkGenerator::proto_failed`).
+    ProtoFailed(i32, i32),
     /// A decorated region, the region indices of its final chunks and what
     /// decoration wrote into them.
     Decorated(i32, i32, Box<[Proto; 9]>, Vec<usize>, FinalWrites),
@@ -547,6 +557,9 @@ pub struct Streaming {
     /// The centre and radius the sweep was last reset for.
     scan_area: ((i32, i32), i32),
     generating: FxHashSet<(i32, i32)>,
+    /// Columns whose generation failed, and when: left ungenerated (never finished or saved
+    /// empty) until [`RETRY_FAILED_GENERATION`] has passed.
+    failed_generation: FxHashMap<(i32, i32), std::time::Instant>,
     generation_scan: GenerationScan,
     /// Proto chunks: `None` while checked out to a decoration or save job.
     protos: FxHashMap<(i32, i32), Option<Proto>>,
@@ -763,6 +776,7 @@ struct GenerationInputs<'a> {
     ranges: Ranges<'a>,
     world: &'a World,
     generating: &'a FxHashSet<(i32, i32)>,
+    failed: &'a FxHashMap<(i32, i32), std::time::Instant>,
     protos: &'a FxHashMap<(i32, i32), Option<Proto>>,
     finishing: &'a FxHashSet<(i32, i32)>,
     decorates: bool,
@@ -787,6 +801,7 @@ impl GenerationScan {
         let missing = |&(_, x, z): &(i64, i32, i32)| {
             !input.world.chunks.contains_key(&(x, z))
                 && !input.generating.contains(&(x, z))
+                && !input.failed.contains_key(&(x, z))
                 && !input.protos.contains_key(&(x, z))
                 && !input.finishing.contains(&(x, z))
         };
@@ -836,6 +851,7 @@ impl GenerationScan {
                     if !input.ranges.requested(x, z, input.decorates)
                         || input.world.chunks.contains_key(&(x, z))
                         || input.generating.contains(&(x, z))
+                        || input.failed.contains_key(&(x, z))
                         || input.protos.contains_key(&(x, z))
                         || input.finishing.contains(&(x, z))
                     {
@@ -858,6 +874,7 @@ impl GenerationScan {
                         let (x, z) = (fx + dx, fz + dz);
                         if input.world.chunks.contains_key(&(x, z))
                             || input.generating.contains(&(x, z))
+                            || input.failed.contains_key(&(x, z))
                             || input.protos.contains_key(&(x, z))
                             || input.finishing.contains(&(x, z))
                         {
@@ -1041,8 +1058,12 @@ impl<G: ChunkGenerator> Jobs<G> {
                 }
                 None => {
                     let proto = generator.proto(&mut *worker, x, z);
-                    let decorated = generator.is_decorated(&proto);
-                    Done::Proto(x, z, proto, decorated)
+                    if generator.proto_failed(&proto) {
+                        Done::ProtoFailed(x, z)
+                    } else {
+                        let decorated = generator.is_decorated(&proto);
+                        Done::Proto(x, z, proto, decorated)
+                    }
                 }
             },
             Job::Decorate(x, z, mut region, finals) => {
@@ -1193,6 +1214,7 @@ impl Streaming {
             scan_age: 0,
             scan_area: ((i32::MIN, i32::MIN), i32::MIN),
             generating: Default::default(),
+            failed_generation: Default::default(),
             generation_scan: GenerationScan::default(),
             protos: Default::default(),
             light_views: Default::default(),
@@ -1832,6 +1854,11 @@ impl Streaming {
                         }
                     }
                 }
+                Done::ProtoFailed(x, z) => {
+                    self.generating.remove(&(x, z));
+                    self.failed_generation
+                        .insert((x, z), std::time::Instant::now());
+                }
                 Done::Decorated(x, z, region, finals, writes) => {
                     self.receive_decorated(x, z, *region, finals, writes, world)
                 }
@@ -2080,13 +2107,16 @@ impl Streaming {
             };
             // A wanted chunk holds back higher-ranked ones only if it can be
             // decorated: its 3x3 neighbourhood is (or will be) generated as
-            // protos, none of them already final.
+            // protos, none of them already final or failed (a failed column
+            // waits `RETRY_FAILED_GENERATION`; holding the order on it would
+            // stop the whole area).
             let waits_for = |s: &Self, x: i32, z: i32| {
                 wants(s, x, z)
                     && (-1..=1).all(|dz| {
                         (-1..=1).all(|dx| {
                             let n = (x + dx, z + dz);
                             !world.chunks.contains_key(&n)
+                                && !s.failed_generation.contains_key(&n)
                                 && (s.protos.contains_key(&n)
                                     || s.generating.contains(&n)
                                     || s.ranges().requested(n.0, n.1, true))
@@ -2318,6 +2348,14 @@ impl Streaming {
         (uploads, removed)
     }
     fn schedule_generation(&mut self, world: &World, workers: usize) {
+        if !self.failed_generation.is_empty() {
+            let before = self.failed_generation.len();
+            self.failed_generation
+                .retain(|_, at| at.elapsed() < RETRY_FAILED_GENERATION);
+            if self.failed_generation.len() != before {
+                self.generation_scan.invalidate();
+            }
+        }
         let input = GenerationInputs {
             ranges: Ranges {
                 center: self.center,
@@ -2330,6 +2368,7 @@ impl Streaming {
             },
             world,
             generating: &self.generating,
+            failed: &self.failed_generation,
             protos: &self.protos,
             finishing: &self.finishing,
             decorates: self.decorates,
@@ -4205,6 +4244,7 @@ mod tests {
         extra: Vec<((i32, i32), i32)>,
         forced: HashSet<(i32, i32)>,
         generating: FxHashSet<(i32, i32)>,
+        failed: FxHashMap<(i32, i32), std::time::Instant>,
         protos: FxHashMap<(i32, i32), Option<Proto>>,
         finishing: FxHashSet<(i32, i32)>,
         decorates: bool,
@@ -4219,6 +4259,7 @@ mod tests {
                 extra: Vec::new(),
                 forced: HashSet::new(),
                 generating: Default::default(),
+                failed: Default::default(),
                 protos: Default::default(),
                 finishing: Default::default(),
                 decorates,
@@ -4238,6 +4279,7 @@ mod tests {
                 },
                 world: &self.world,
                 generating: &self.generating,
+                failed: &self.failed,
                 protos: &self.protos,
                 finishing: &self.finishing,
                 decorates: self.decorates,
@@ -4287,6 +4329,7 @@ mod tests {
         let missing = |x, z| {
             !input.world.chunks.contains_key(&(x, z))
                 && !input.generating.contains(&(x, z))
+                && !input.failed.contains_key(&(x, z))
                 && !input.protos.contains_key(&(x, z))
                 && !input.finishing.contains(&(x, z))
         };
@@ -4375,6 +4418,27 @@ mod tests {
             f.world = World::new(horizon_world::registry::BlockStateId(0), 1);
             assert!(f.assert_same(&mut gate, 6));
         }
+    }
+
+    /// A column whose generation failed is not asked for again until its wait is over and the
+    /// scan is invalidated (`schedule_generation`).
+    #[test]
+    fn a_failed_column_waits_out_of_the_generation_scan() {
+        let columns = |gate: &mut GenerationScan, f: &GenerationFixture| -> Vec<(i32, i32)> {
+            gate.candidates(f.input(), usize::MAX)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(_, x, z)| (x, z))
+                .collect()
+        };
+        let mut f = GenerationFixture::new(2, true);
+        f.failed.insert((0, 0), std::time::Instant::now());
+        let mut gate = GenerationScan::default();
+        let wanted = columns(&mut gate, &f);
+        assert!(!wanted.contains(&(0, 0)) && wanted.contains(&(1, 0)));
+        f.failed.clear();
+        gate.invalidate();
+        assert!(columns(&mut gate, &f).contains(&(0, 0)));
     }
 
     #[test]

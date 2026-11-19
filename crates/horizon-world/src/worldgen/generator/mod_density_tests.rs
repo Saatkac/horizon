@@ -56,9 +56,9 @@ impl ModDensityFunction for RampFunction {
     fn varies_with_y(&self) -> bool {
         true
     }
-    fn sample(&self, position: [i32; 3], seed: i64) -> f32 {
+    fn sample(&self, position: [i32; 3], seed: i64) -> Result<f32, String> {
         self.points.fetch_add(1, Ordering::Relaxed);
-        self.ramp.value(position, seed)
+        Ok(self.ramp.value(position, seed))
     }
     fn fill(
         &self,
@@ -67,7 +67,7 @@ impl ModDensityFunction for RampFunction {
         count: [usize; 3],
         seed: i64,
         out: &mut [f32],
-    ) {
+    ) -> Result<(), String> {
         self.volumes.fetch_add(1, Ordering::Relaxed);
         assert_eq!(out.len(), count.iter().product::<usize>());
         let mut index = 0;
@@ -81,6 +81,7 @@ impl ModDensityFunction for RampFunction {
                 }
             }
         }
+        Ok(())
     }
 }
 
@@ -102,11 +103,48 @@ impl ModDensityFunction for FlatValue {
     fn varies_with_y(&self) -> bool {
         false
     }
-    fn sample(&self, _: [i32; 3], _: i64) -> f32 {
-        self.0
+    fn sample(&self, _: [i32; 3], _: i64) -> Result<f32, String> {
+        Ok(self.0)
     }
-    fn fill(&self, _: [i32; 3], _: [i32; 3], _: [usize; 3], _: i64, out: &mut [f32]) {
+    fn fill(
+        &self,
+        _: [i32; 3],
+        _: [i32; 3],
+        _: [usize; 3],
+        _: i64,
+        out: &mut [f32],
+    ) -> Result<(), String> {
         out.fill(self.0);
+        Ok(())
+    }
+}
+
+/// A function whose code fails (as a contained panic comes back from the adapter).
+struct Fails;
+impl ModDensityFunctionType for Fails {
+    fn decode(&self, _: &str) -> Result<Arc<dyn ModDensityFunction>, String> {
+        Ok(Arc::new(Fails))
+    }
+}
+impl ModDensityFunction for Fails {
+    fn range(&self) -> [f32; 2] {
+        [-1.0, 1.0]
+    }
+    fn varies_with_y(&self) -> bool {
+        true
+    }
+    fn sample(&self, _: [i32; 3], _: i64) -> Result<f32, String> {
+        Err("the mod's sample panicked".into())
+    }
+    fn fill(
+        &self,
+        _: [i32; 3],
+        _: [i32; 3],
+        _: [usize; 3],
+        _: i64,
+        _: &mut [f32],
+    ) -> Result<(), String> {
+        Err("the mod's fill panicked".into())
     }
 }
 
@@ -133,6 +171,7 @@ fn install() {
             }) as _,
         ),
         ("worldgen_test:flat".to_owned(), Arc::new(Flat) as _),
+        ("worldgen_test:fails".to_owned(), Arc::new(Fails) as _),
     ]));
 }
 
@@ -331,4 +370,21 @@ fn an_unknown_or_refused_mod_type_is_a_load_error_naming_it() {
         refused.contains("density type worldgen_test:ramp: a ramp needs its base"),
         "{refused}"
     );
+}
+
+/// A mod function whose code fails mid-generation fails that chunk's generation and far terrain
+/// with an error, on the worker that asked, instead of unwinding through it.
+#[test]
+fn a_failing_mod_function_fails_the_chunk_not_the_worker() {
+    install();
+    let Some(root) = resources() else { return };
+    let data = data(&root);
+    let (_, mut worker) = ramp_world(&data, 1, "worldgen_test:fails");
+    let error = worker
+        .generate_proto(ChunkPos::new(0, 0))
+        .err()
+        .expect("generation fails")
+        .to_string();
+    assert!(error.contains("External"), "{error}");
+    assert!(worker.lod_grid(0, 0, 8, 4, false).is_err());
 }

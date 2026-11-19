@@ -332,8 +332,13 @@ same value on every thread, run and machine. It runs on the worldgen worker thre
 (vanilla's interval arithmetic works from it), and `varies_with_y` returning `false` has it asked at
 y = 0 once per column. Chunk fill, far terrain and structure heights ask `fill` for whole volumes,
 `y` fastest, then `x`, then `z`; its default asks `sample` for each position, so override it to
-share work across a column. Only single-point readers, spawn finding and `/locate biome`, ask
-`sample`.
+share work across a column. Single-point readers, spawn finding and `/locate biome`, ask
+`sample`. Under `find_top_surface`, and off the cell lattice under `interpolated`, the function is
+still asked a point at a time (#18372).
+
+`range` and `varies_with_y` are asked once, when the density JSON loads. A panic in `decode` fails
+the load, naming the type. A panic in `sample` or `fill` fails the generation of that chunk, which
+is logged with the type and tried again later: the chunk is never saved empty.
 
 A type in another mod's namespace, an empty name, a name an id can't hold and an id registered
 twice stop the game at startup with a message naming the mod. Density JSON naming a type nobody

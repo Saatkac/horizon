@@ -1000,6 +1000,12 @@ impl ChunkGenerator for VanillaTerrain {
             }
         }
     }
+    fn proto_failed(&self, proto: &Proto) -> bool {
+        matches!(
+            proto.downcast_ref::<VanillaProto>(),
+            Some(VanillaProto::Failed(..))
+        )
+    }
     fn decorates(&self) -> bool {
         true
     }
@@ -1290,6 +1296,8 @@ impl ChunkGenerator for VanillaTerrain {
         let proto = proto.downcast::<VanillaProto>().expect("vanilla proto");
         let mut chunk = match *proto {
             VanillaProto::Ready(c) => c,
+            // The streamer holds a failed proto back (`proto_failed`): only a caller outside it,
+            // which generates without saving, gets this empty column.
             VanillaProto::Failed(x, z) => return Chunk::with_layout(x, z, self.layout()),
         };
         let mut out = chunk.column(self);

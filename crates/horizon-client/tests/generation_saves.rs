@@ -50,7 +50,13 @@ struct Recorder {
     finished: Mutex<HashMap<(i32, i32), Vec<Recorded>>>,
     /// The proto chunks a light job was given a view of, as they were.
     viewed: Mutex<Vec<Recorded>>,
+    /// A column whose generation fails (`ChunkGenerator::proto_failed`), and how often it was
+    /// tried.
+    fails_at: Mutex<Option<(i32, i32)>>,
+    failures: std::sync::atomic::AtomicUsize,
 }
+/// What `Recorder::proto` gives for the column that fails.
+struct FailedProto;
 impl Recorder {
     fn save_chunk(&self, chunk: &Chunk) {
         let mut saved = chunk.clone();
@@ -69,6 +75,11 @@ impl ChunkGenerator for Recorder {
         self.chunks.lock().unwrap().get(&(x, z)).cloned()
     }
     fn proto(&self, _: &mut (), x: i32, z: i32) -> Proto {
+        if *self.fails_at.lock().unwrap() == Some((x, z)) {
+            self.failures
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            return Box::new(FailedProto);
+        }
         let saved = self.protos.lock().unwrap().get(&(x, z)).cloned();
         Box::new(saved.unwrap_or(Recorded {
             x,
@@ -76,6 +87,9 @@ impl ChunkGenerator for Recorder {
             decorated: false,
             writes: Vec::new(),
         }))
+    }
+    fn proto_failed(&self, proto: &Proto) -> bool {
+        proto.is::<FailedProto>()
     }
     fn decorates(&self) -> bool {
         true
@@ -248,6 +262,40 @@ fn a_new_column_is_told_apart_from_a_saved_one() {
     session.settle_at((0, 0));
     let again = std::mem::take(&mut session.world.loaded_chunks);
     assert!(again.contains(&(0, 0, false)), "{again:?}");
+}
+
+/// A column whose generation fails (a mod's density function panicked) is never finished or
+/// saved as an empty column: it stays missing, and generates once the failure is gone.
+#[test]
+fn a_column_whose_generation_fails_is_not_saved_empty() {
+    let Some(root) = resources() else {
+        return;
+    };
+    let context = worker_context(&root);
+    let generator = Arc::new(Recorder::default());
+    *generator.fails_at.lock().unwrap() = Some((1, 1));
+    let mut session = Session::new(generator.clone(), context.clone());
+    session.settle_at((0, 0));
+    assert!(
+        generator
+            .failures
+            .load(std::sync::atomic::Ordering::Relaxed)
+            > 0
+    );
+    assert!(!session.world.chunks.contains_key(&(1, 1)));
+    let mut loaded: Vec<_> = session.world.chunks.keys().copied().collect();
+    loaded.sort_unstable();
+    assert!(session.world.chunks.contains_key(&(-3, 0)), "{loaded:?}");
+    session.save();
+    drop(session);
+    assert!(!generator.finished.lock().unwrap().contains_key(&(1, 1)));
+    assert!(!generator.chunks.lock().unwrap().contains_key(&(1, 1)));
+    assert!(!generator.protos.lock().unwrap().contains_key(&(1, 1)));
+    *generator.fails_at.lock().unwrap() = None;
+    let mut session = Session::new(generator.clone(), context);
+    session.settle_at((0, 0));
+    assert!(session.world.chunks.contains_key(&(1, 1)));
+    assert_eq!(generator.finished.lock().unwrap()[&(1, 1)].len(), 1);
 }
 
 #[test]

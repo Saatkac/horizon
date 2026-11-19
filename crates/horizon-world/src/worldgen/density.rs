@@ -650,10 +650,17 @@ mod tests {
             fn varies_with_y(&self) -> bool {
                 true
             }
-            fn sample(&self, [_, y, _]: [i32; 3], seed: i64) -> f32 {
-                self.0 * y as f32 + seed as f32
+            fn sample(&self, [_, y, _]: [i32; 3], seed: i64) -> Result<f32, String> {
+                Ok(self.0 * y as f32 + seed as f32)
             }
-            fn fill(&self, _: [i32; 3], _: [i32; 3], _: [usize; 3], _: i64, _: &mut [f32]) {
+            fn fill(
+                &self,
+                _: [i32; 3],
+                _: [i32; 3],
+                _: [usize; 3],
+                _: i64,
+                _: &mut [f32],
+            ) -> Result<(), String> {
                 unreachable!("these tests sample points")
             }
         }
@@ -671,10 +678,19 @@ mod tests {
             fn varies_with_y(&self) -> bool {
                 false
             }
-            fn sample(&self, _: [i32; 3], _: i64) -> f32 {
-                self.0[0]
+            fn sample(&self, _: [i32; 3], _: i64) -> Result<f32, String> {
+                Ok(self.0[0])
             }
-            fn fill(&self, _: [i32; 3], _: [i32; 3], _: [usize; 3], _: i64, _: &mut [f32]) {}
+            fn fill(
+                &self,
+                _: [i32; 3],
+                _: [i32; 3],
+                _: [usize; 3],
+                _: i64,
+                _: &mut [f32],
+            ) -> Result<(), String> {
+                Ok(())
+            }
         }
 
         fn types() -> &'static ModDensityFunctionTypes {
@@ -773,9 +789,9 @@ mod tests {
             fn varies_with_y(&self) -> bool {
                 self.varies
             }
-            fn sample(&self, position: [i32; 3], seed: i64) -> f32 {
+            fn sample(&self, position: [i32; 3], seed: i64) -> Result<f32, String> {
                 POINTS.fetch_add(1, Ordering::Relaxed);
-                self.value(position, seed)
+                Ok(self.value(position, seed))
             }
             fn fill(
                 &self,
@@ -784,7 +800,7 @@ mod tests {
                 count: [usize; 3],
                 seed: i64,
                 out: &mut [f32],
-            ) {
+            ) -> Result<(), String> {
                 VOLUMES.fetch_add(1, Ordering::Relaxed);
                 assert_eq!(out.len(), count.iter().product::<usize>());
                 let mut index = 0;
@@ -798,6 +814,7 @@ mod tests {
                         }
                     }
                 }
+                Ok(())
             }
         }
 

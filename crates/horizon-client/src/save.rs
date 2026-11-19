@@ -4962,6 +4962,9 @@ impl<G: ChunkGenerator> ChunkGenerator for Persistent<G> {
     fn is_decorated(&self, proto: &crate::streaming::Proto) -> bool {
         self.inner.is_decorated(proto)
     }
+    fn proto_failed(&self, proto: &crate::streaming::Proto) -> bool {
+        self.inner.proto_failed(proto)
+    }
     fn proto_status(
         &self,
         proto: &crate::streaming::Proto,

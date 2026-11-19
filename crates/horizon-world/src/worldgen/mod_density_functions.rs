@@ -16,16 +16,25 @@ pub trait ModDensityFunctionType: Send + Sync {
     fn decode(&self, json: &str) -> Result<Arc<dyn ModDensityFunction>, String>;
 }
 
-/// A decoded node: a pure function of the world seed and the block position.
+/// A decoded node: a pure function of the world seed and the block position. `Err` is the mod's
+/// code failing (the adapter's contained panic): what reads the value fails with
+/// [`SampleError::External`], as a chunk whose generation fails.
 pub trait ModDensityFunction: Send + Sync {
-    /// `[min, max]` of every value.
+    /// `[min, max]` of every value, read once when the node decodes.
     fn range(&self) -> [f32; 2];
-    /// `false`: the value never depends on y.
+    /// `false`: the value never depends on y. Read once when the node decodes.
     fn varies_with_y(&self) -> bool;
-    fn sample(&self, position: [i32; 3], seed: i64) -> f32;
+    fn sample(&self, position: [i32; 3], seed: i64) -> Result<f32, String>;
     /// `count` positions from `origin`, `step` apart, into `out` (exactly that many values, y
     /// fastest, then x, then z).
-    fn fill(&self, origin: [i32; 3], step: [i32; 3], count: [usize; 3], seed: i64, out: &mut [f32]);
+    fn fill(
+        &self,
+        origin: [i32; 3],
+        step: [i32; 3],
+        count: [usize; 3],
+        seed: i64,
+        out: &mut [f32],
+    ) -> Result<(), String>;
 }
 
 /// The installed density function types, `modid:plates` → type. Set once, before any world opens
@@ -77,7 +86,9 @@ struct ModDensitySampler {
 }
 impl DensitySampler for ModDensitySampler {
     fn sample_value(&self, _: &mut SamplerContext, position: [i32; 3]) -> Result<f32, SampleError> {
-        Ok(self.function.sample(position, self.seed))
+        self.function
+            .sample(position, self.seed)
+            .map_err(|error| self.failed(&error))
     }
     fn sample_volume(
         &self,
@@ -88,19 +99,27 @@ impl DensitySampler for ModDensitySampler {
         let out = buffer
             .get_mut(..volume.size())
             .ok_or(DensityError::BufferTooShort)?;
-        self.function.fill(
-            volume.minimum(),
-            volume.steps(),
-            volume.sizes(),
-            self.seed,
-            out,
-        );
-        Ok(())
+        self.function
+            .fill(
+                volume.minimum(),
+                volume.steps(),
+                volume.sizes(),
+                self.seed,
+                out,
+            )
+            .map_err(|error| self.failed(&error))
     }
     /// Each value depends on its own position (and the fixed seed) only, so a lattice sampled
     /// once can be reused, as vanilla's noises are.
     fn pointwise_inputs(&self) -> Option<Vec<&Arc<dyn DensitySampler>>> {
         Some(Vec::new())
+    }
+}
+impl ModDensitySampler {
+    /// The mod's failure, logged with the type's id, as the error the reader gets.
+    fn failed(&self, error: &str) -> SampleError {
+        log::error!("density function type {} failed: {error}", self.id);
+        SampleError::External
     }
 }
 impl std::fmt::Debug for ModDensitySampler {
