@@ -388,3 +388,41 @@ fn a_failing_mod_function_fails_the_chunk_not_the_worker() {
     assert!(error.contains("External"), "{error}");
     assert!(worker.lod_grid(0, 0, 8, 4, false).is_err());
 }
+
+/// A failing mod `continents` reaches every climate and height reader; each gives an error or no
+/// answer on the worker that asked, none unwinds through it.
+#[test]
+fn every_reader_of_a_failing_mod_function_returns() {
+    install();
+    let Some(root) = resources() else { return };
+    let data = data(&root);
+    let pipeline = pipeline(&data, 12345, false, |settings| {
+        settings["noise_router"]["continents"] = serde_json::json!({"type": "worldgen_test:fails"});
+    })
+    .expect("pipeline");
+    let generator = OverworldGenerator {
+        pipeline: pipeline.clone(),
+        noise_clamped: None,
+    };
+    let mut worker = generator.worker();
+    assert!(worker.generate_proto(ChunkPos::new(3, -2)).is_err());
+    assert!(worker.lod_grid(48, -32, 8, 4, false).is_err());
+    assert!(
+        worker
+            .noise_biomes(&[[0, 60, 0], [97, 60, -53]])
+            .iter()
+            .all(Option::is_none)
+    );
+    let found = worker.find_closest_biome(&BiomeSearch {
+        allowed: &|_| true,
+        origin: [0, 64, 0],
+        radius: 64,
+        horizontal: 8,
+        vertical: 16,
+        min_y: -64,
+        max_y: 319,
+    });
+    assert_eq!(found, None);
+    let _ = pipeline.base_height(5, 9, HeightmapType::WorldSurfaceWg);
+    let _ = generator.spawn_position();
+}
