@@ -142,6 +142,29 @@ enum AccountCmd {
     },
     /// Play as this account
     Select { who: String },
+    /// Offline profiles: play without a Microsoft account (single player, LAN and offline-mode
+    /// servers). Without a subcommand, the list
+    Offline {
+        #[command(subcommand)]
+        action: Option<OfflineCmd>,
+    },
+}
+
+#[derive(Subcommand, Clone)]
+enum OfflineCmd {
+    /// The offline profiles, and which one plays (* = the one Play starts)
+    List,
+    /// Add an offline profile and play as it from now on
+    Add {
+        /// The player name (letters, digits and underscores, at most 16)
+        name: String,
+    },
+    /// Remove an offline profile
+    Remove { name: String },
+    /// Play as this offline profile
+    Select { name: String },
+    /// Play as the Microsoft account again (offline profiles are kept)
+    Microsoft,
 }
 
 #[derive(Subcommand)]
@@ -2078,9 +2101,73 @@ fn account_command(action: AccountCmd, as_json: bool) -> Result<(), String> {
             accounts.save()?;
             println!("The game plays as {}.", a.name);
         }
+        AccountCmd::Offline { action } => offline_command(action.unwrap_or(OfflineCmd::List), as_json)?,
     }
     Ok(())
 }
+/// `account offline`: the profiles that play without a Microsoft account.
+fn offline_command(action: OfflineCmd, as_json: bool) -> Result<(), String> {
+    use horizon_launcher::offline::Offline;
+    let mut list = Offline::load();
+    match action {
+        OfflineCmd::List => {
+            if as_json {
+                json(serde_json::json!({
+                    "profiles": list.profiles,
+                    "selected": list.selected_name(),
+                }));
+            } else if list.profiles.is_empty() {
+                println!(
+                    "No offline profile yet: horizon-launcher account offline add <name>"
+                );
+            } else {
+                for name in &list.profiles {
+                    let mark = if list.selected_name() == Some(name.as_str()) {
+                        "*"
+                    } else {
+                        " "
+                    };
+                    println!("{mark} {name}");
+                }
+                if list.selected_name().is_none() {
+                    println!("No offline profile plays: a Microsoft account does.");
+                }
+            }
+        }
+        OfflineCmd::Add { name } => {
+            let name = list.add(&name)?;
+            list.save()?;
+            if as_json {
+                json(serde_json::json!({ "profile": name, "selected": name }));
+            } else {
+                println!("Added the offline profile {name}; Play starts as it from now on.");
+            }
+        }
+        OfflineCmd::Remove { name } => {
+            if !list.profiles.iter().any(|p| p.eq_ignore_ascii_case(&name)) {
+                return Err(format!("No offline profile {name}. See `horizon-launcher account offline`."));
+            }
+            list.remove(&name);
+            list.save()?;
+            println!("Removed the offline profile {name}.");
+        }
+        OfflineCmd::Select { name } => {
+            if !list.profiles.iter().any(|p| p.eq_ignore_ascii_case(&name)) {
+                return Err(format!("No offline profile {name}. See `horizon-launcher account offline`."));
+            }
+            list.select(Some(&name));
+            list.save()?;
+            println!("The game plays as the offline profile {name}.");
+        }
+        OfflineCmd::Microsoft => {
+            list.select(None);
+            list.save()?;
+            println!("The game plays as the selected Microsoft account again.");
+        }
+    }
+    Ok(())
+}
+
 /// `data`: the same consent as Settings → Data collection.
 fn data(action: DataCmd, as_json: bool) -> Result<(), String> {
     use horizon_launcher::telemetry;

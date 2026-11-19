@@ -2,6 +2,22 @@
 use super::*;
 
 impl Launcher {
+    /// Whether Play starts as an offline profile: no Microsoft account, no owner gate. A local
+    /// unsigned developer base plays without one too.
+    pub(crate) fn plays_offline(&self) -> bool {
+        self.offline.selected_name().is_some()
+            || horizon_launcher::developer_offline::selected()
+    }
+
+    /// Who may start the game: an offline profile always may; otherwise the keychain's answer.
+    pub(crate) fn play_owner(&self) -> Option<bool> {
+        if self.plays_offline() {
+            Some(true)
+        } else {
+            self.owner
+        }
+    }
+
     /// After a crash with no report: when the game's output ends while its Vulkan renderer
     /// started, a native crash in the graphics driver (arismoko/horizon#746), switches the game to
     /// `backend::vulkan_crash_fallback` (DirectX 12 on Windows, OpenGL on Linux; only where the
@@ -371,6 +387,9 @@ impl Launcher {
             say("reading the sign-in", tr("Reading the sign-in…"));
             let session = if horizon_launcher::developer_offline::enabled(&tag) {
                 Ok(None)
+            } else if let Some(name) = horizon_launcher::offline::Offline::load().selected_name() {
+                // An offline profile: no Microsoft services, the name alone.
+                Ok(Some(account::GameSession::as_offline(name)))
             } else {
                 account::session_for_game(&backend::game_home()).map(Some)
             };

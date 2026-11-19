@@ -162,10 +162,13 @@ The opening, then Play ([clip](docs/opening.webm)):
   [instance] [--remove]`; `HORIZON_LAUNCHER_DESKTOP` points it at another folder.
 - **Accounts and quick switch**: the top bar's account chip opens a menu of the signed-in
   Microsoft accounts. Picking one plays as it from the next Play; that account must own the game
-  ([Microsoft accounts](#microsoft-accounts)). There are no offline names: the project decided
-  that Horizon plays only with a Microsoft account that owns Minecraft: Java Edition. The
-  Console's Share log takes the account names out of the log. `horizon-launcher account select
-  <name>`.
+  ([Microsoft accounts](#microsoft-accounts)). The Console's Share log takes the account names
+  out of the log. `horizon-launcher account select <name>`.
+- **Offline profiles**: Settings → Accounts adds a name that plays without a Microsoft account
+  ([Offline profiles](#offline-profiles)). Its Play starts the game with `--name`, so the game
+  derives vanilla's offline UUID from it: single player, LAN and offline-mode servers work, and
+  online-mode servers refuse it as they should. `horizon-launcher account offline add <name>`,
+  `… select <name>`, `… microsoft` to play as the Microsoft account again.
 - **Accent and Home background**: on top of Dark, Light or System, Settings > Launcher picks an
   accent (Horizon's violet, blue, teal, green, amber, red or pink, any hue, or any colour typed as
   hex in the dark look) and a picture of the player's own behind Home (PNG, JPEG or WebP, cropped
@@ -403,6 +406,9 @@ and don't set `%ERRORLEVEL%` / `$LASTEXITCODE`. Scripts that need the exit code 
     horizon-launcher account sign-in                sign in in your browser with a code
     horizon-launcher account sign-out <name>
     horizon-launcher account select <name>          play as this account
+    horizon-launcher account offline [list]         the offline profiles (* = Play starts it)
+    horizon-launcher account offline add <name>     add one and play as it
+    horizon-launcher account offline microsoft      play as the Microsoft account again
     horizon-launcher instance [list]                the instances and their game folders (* = Play starts it)
     horizon-launcher instance create <name> [--copy <instance>]   empty, or a copy of one's worlds, options and packs
     horizon-launcher instance create <name> --minecraft <1.21.4|latest|latest-snapshot>   a Minecraft: Java Edition instance
@@ -517,6 +523,16 @@ deletes as soon as it has read it. Sign out removes the tokens.
 Sign-in needs Horizon's own Azure app registration: its client ID is built in from
 `HORIZON_MSA_CLIENT_ID` (and `HORIZON_MSA_CLIENT_ID` at run time overrides it; empty = not
 configured). How it works: [docs/microsoft-account.md](../docs/microsoft-account.md).
+
+## Offline profiles
+
+An offline profile is a name and nothing else: Settings → Accounts (or `horizon-launcher account
+offline add <name>`) keeps the names in `offline.json` in the launcher's folder, and the one chosen
+takes Play until a Microsoft account is chosen again. The game then starts with `--name <name>` and
+no session, so it uses vanilla's offline UUID (`OfflinePlayer:<name>`) exactly as Minecraft does:
+single player, LAN worlds and offline-mode servers work with the name and keep their player data,
+while online-mode servers refuse the join, which is the servers' rule rather than the launcher's.
+Nothing is sent to Microsoft, and the Microsoft accounts stay signed in beside it.
 
 ## Logs and crash reports
 

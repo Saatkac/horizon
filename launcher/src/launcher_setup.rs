@@ -53,6 +53,15 @@ impl Launcher {
         if settings.minecraft_dir.is_none() {
             settings.minecraft_dir = backend::default_minecraft_dir();
         }
+        // A small computer (a four-thread laptop with shared graphics) draws the sunset at a
+        // handful of frames a second: it starts in the cheaper look, which Settings turns off
+        // again. The animated scene alone keeps such a machine warm while the launcher idles.
+        if settings.performance.is_none()
+            && std::thread::available_parallelism().is_ok_and(|threads| threads.get() <= 4)
+        {
+            settings.performance = Some(true);
+            let _ = settings.save();
+        }
         // Release builds on Linux put their entry back in the applications menu when there is
         // none or it starts a program that is gone (a moved or deleted binary), never over one
         // that works; `HORIZON_LAUNCHER_DESKTOP_ENTRY=1` does it in a development build.
@@ -100,7 +109,7 @@ impl Launcher {
             sheet_size: None,
             mods_sticky: sticky::Sticky::default(),
             long_list: cull::Cull::default(),
-            opening: (!settings.skip_opening).then(|| {
+            opening: (!settings.skip_opening && !settings.performance()).then(|| {
                 let focus = cx.focus_handle();
                 window.focus(&focus, cx);
                 Opening {
@@ -193,6 +202,15 @@ impl Launcher {
             ),
             proxy_focused: false,
             proxy_focus: cx.focus_handle(),
+            offline: horizon_launcher::offline::Offline::load(),
+            offline_input: line_edit::LineEdit::new(
+                String::new(),
+                horizon_launcher::offline::MAX_NAME,
+                24,
+            ),
+            offline_focused: false,
+            offline_focus: cx.focus_handle(),
+            offline_error: None,
             settings,
             settings_save_error: None,
             links: backend::Links::default(),

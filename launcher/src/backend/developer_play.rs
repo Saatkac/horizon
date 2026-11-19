@@ -11,6 +11,14 @@ pub fn client_as(tag: &str, who: Option<&str>) -> Result<Command, String> {
     let session = if crate::developer_offline::enabled(tag) && who.is_none() {
         crate::developer_offline::require_capability(tag)?;
         None
+    } else if let Some(name) = crate::offline::Offline::load().selected_name() {
+        // An offline profile: no Microsoft services, the name alone.
+        if who.is_some() {
+            eprintln!(
+                "Horizon: playing as the offline profile {name}; --account is ignored."
+            );
+        }
+        Some(account::GameSession::as_offline(name))
     } else {
         Some(match who {
             None => account::session_for_game(&game_home()).map_err(|refused| {
@@ -34,6 +42,9 @@ pub fn client_as(tag: &str, who: Option<&str>) -> Result<Command, String> {
     if let Some(session) = session {
         if let Some(file) = session.file {
             cmd.arg("--session-file").arg(file);
+        }
+        if let Some(name) = session.name {
+            cmd.arg("--name").arg(name);
         }
         cmd.envs(session.env);
         if let Some(e) = session.offline {

@@ -25,10 +25,20 @@ impl Launcher {
                     return;
                 }
             };
-            if let Some(account::GameSession { file, offline, env }) = pass {
+            if let Some(account::GameSession {
+                file,
+                offline,
+                name,
+                env,
+            }) = pass
+            {
                 self.owner = Some(true);
                 if let Some(file) = file {
                     cmd.arg("--session-file").arg(file);
+                }
+                // An offline profile: the game derives vanilla's offline UUID from the name.
+                if let Some(name) = name {
+                    cmd.arg("--name").arg(name);
                 }
                 cmd.envs(env);
                 // Still play, offline, and say why.

@@ -595,6 +595,116 @@ impl Launcher {
             action,
             &t,
         ));
+        // Offline profiles (`offline`): a name that plays without a Microsoft account.
+        n += 1;
+        let names = self.offline.profiles.clone();
+        let selected = self.offline.selected_name().map(str::to_owned);
+        let mut list = div().flex().flex_col().gap(px(6.));
+        for name in &names {
+            let on = selected.as_deref() == Some(name.as_str());
+            let pick = name.clone();
+            list = list.child(
+                div()
+                    .id(SharedString::from(format!("blocky-offline-{name}")))
+                    .flex()
+                    .items_center()
+                    .gap(px(10.))
+                    .h(px(34.))
+                    .px(px(10.))
+                    .rounded(px(8.))
+                    .bg(if on { t.accent.opacity(0.16) } else { t.well })
+                    .cursor_pointer()
+                    .child(text(theme::UI).text_color(if on { t.ink } else { t.muted }).child(
+                        format!("{}{name}", if on { "* " } else { "" }),
+                    ))
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        this.offline.select(Some(&pick));
+                        this.offline_error = this.offline.save().err();
+                        cx.notify();
+                    })),
+            );
+        }
+        let detail: AnyElement = div()
+            .child(tr(
+                "Play without a Microsoft account: single player, LAN, and servers that don't \
+                 check accounts. Online-mode servers need Microsoft.",
+            ))
+            .into_any_element();
+        let field = div()
+            .id("blocky-offline-name")
+            .track_focus(&self.offline_focus)
+            .flex()
+            .items_center()
+            .w(px(240.))
+            .h(px(30.))
+            .px(px(12.))
+            .border_2()
+            .border_color(if self.offline_focused { t.accent } else { t.outline })
+            .bg(t.well)
+            .text_size(px(12.))
+            .cursor_text()
+            .child(line_edit::content(
+                &self.offline_input,
+                &t,
+                self.offline_focused,
+                false,
+                false,
+                "Offline name",
+            ))
+            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                window.focus(&this.offline_focus, cx);
+                cx.notify();
+            }))
+            .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
+                match line_edit::handle(&mut this.offline_input, ev, cx) {
+                    line_edit::Key::Pass => return,
+                    line_edit::Key::Escape => window.blur(cx),
+                    line_edit::Key::Enter => this.add_offline_profile(),
+                    _ => {}
+                }
+                cx.stop_propagation();
+                cx.notify();
+            }));
+        let field = line_edit::mouse(field, cx, |this| &mut this.offline_input);
+        let mut action = div().flex().items_center().gap(px(8.)).child(field).child(
+            button("offline-add-blocky", "Add", Kind::Secondary, &t).on_click(cx.listener(
+                |this, _: &ClickEvent, _, cx| {
+                    this.add_offline_profile();
+                    cx.notify();
+                },
+            )),
+        );
+        if selected.is_some() {
+            action = action.child(
+                button("offline-ms-blocky", "Use Microsoft account", Kind::Ghost, &t).on_click(
+                    cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.offline.select(None);
+                        this.offline_error = this.offline.save().err();
+                        cx.notify();
+                    }),
+                ),
+            );
+        }
+        rows = rows.child(index_row(
+            n,
+            "Offline profiles",
+            Some(detail),
+            Some(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .children((!names.is_empty()).then_some(list))
+                    .child(action)
+                    .children(
+                        self.offline_error
+                            .clone()
+                            .map(|e| text(theme::CAPTION).text_color(t.danger).child(e)),
+                    )
+                    .into_any_element(),
+            ),
+            &t,
+        ));
         (rows, n)
     }
 

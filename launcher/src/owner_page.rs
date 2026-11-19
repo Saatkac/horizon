@@ -8,7 +8,9 @@ impl Launcher {
     /// Whether the screen covers the window: no owner, and either Play was refused or the player
     /// hasn't read it yet. The data question comes first.
     pub(crate) fn asking_owner(&self) -> bool {
-        (!horizon_launcher::developer_offline::selected() || sign_in_preview())
+        // An offline profile plays without an account, so the gate never stands in its way.
+        let offline = self.offline.selected_name().is_some();
+        (!horizon_launcher::developer_offline::selected() && !offline || sign_in_preview())
             && (self.owner == Some(false) || sign_in_preview())
             && (self.owner_screen_open || !self.settings.owner_notice_seen || sign_in_preview())
             && !self.asking_consent()

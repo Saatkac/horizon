@@ -119,12 +119,23 @@ impl Launcher {
         // Not prepared: an owner can have Horizon download Minecraft from Mojang; without an
         // owner there is nothing to play, so signing in comes first.
         let first = (!prepared && !self.preparing)
-            .then_some(self.owner)
+            .then_some(self.play_owner())
             .flatten();
         // No launcher folder with Minecraft on this computer: an owner needs none.
         let no_install = self.settings.minecraft_dir.is_none();
+        // An offline profile can't download from Mojang: it prepares from the player's own
+        // install, so with none found it must be pointed at one.
+        let offline_only = self.plays_offline();
         let resources_value = match first {
             _ if self.preparing => tr("Preparing…").to_string(),
+            Some(true) if offline_only && no_install => trf(
+                "Not prepared. An offline profile prepares Minecraft {version} from your own install: choose the folder your launcher keeps it in.",
+                &[("version", &version)],
+            ),
+            Some(true) if offline_only => trf(
+                "Not prepared. An offline profile prepares Minecraft {version} from your own install.",
+                &[("version", &version)],
+            ),
             Some(true) if no_install => trf(
                 "Not prepared. Play downloads Minecraft {version} from Mojang for your account and prepares it.",
                 &[("version", &version)],
@@ -157,7 +168,24 @@ impl Launcher {
                 cx.notify();
             }));
         }
+        // An offline profile has no account to download from Mojang with: only the player's own
+        // install prepares it.
         let prepare = match first {
+            Some(true) if offline_only && no_install => div().child(
+                button("prepare-choose-folder", "Choose Minecraft's folder", Kind::Secondary, &t)
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.go(Page::Settings);
+                        cx.notify();
+                    })),
+            ),
+            Some(true) if offline_only => div().child(
+                button("prepare-install", "From my install", Kind::Secondary, &t).on_click(
+                    cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.prepare(backend::MinecraftFrom::Install);
+                        cx.notify();
+                    }),
+                ),
+            ),
             Some(true) if no_install => div().child(
                 button(
                     "prepare-download",
@@ -201,11 +229,13 @@ impl Launcher {
             )),
             None => div().child(prepare),
         };
-        let owner = self.owner == Some(true);
+        let owner = self.play_owner() == Some(true);
         let minecraft = self.settings.minecraft_dir.as_deref().map_or_else(
             || {
                 div()
-                    .child(if owner {
+                    .child(if offline_only {
+                        tr("Not found. An offline profile prepares the game from your own Minecraft install: choose its folder.")
+                    } else if owner {
                         tr("None needed: Horizon downloads Minecraft from Mojang for your account.")
                     } else {
                         tr("Not found. Choose the folder where your launcher keeps Minecraft.")
@@ -271,7 +301,7 @@ impl Launcher {
         // account that owns the game (Play needs one), or offline. The glass look's top bar has
         // Sign in with Microsoft and says Offline itself.
         if !t.glass {
-            if self.owner == Some(false) {
+            if self.play_owner() == Some(false) {
                 rows = rows.child(index_row(
                     5,
                     tr("Microsoft account"),

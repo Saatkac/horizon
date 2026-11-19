@@ -53,6 +53,14 @@ const MARGIN: i32 = 20;
 const WIDE_SUN: (f64, f64, f64) = (0.72, 1.1, 0.1);
 /// The website draws a frame when 31 ms have passed since the last.
 const TICK: Duration = Duration::from_millis(31);
+/// The tick once the parallax has settled on the pointer: the slow drift (twinkling stars,
+/// fireflies, the odd meteor) reads the same at a third of the pointer's rate, and every frame
+/// of this view draws the whole window.
+const TICK_SETTLED: Duration = Duration::from_millis(92);
+/// The tick a small computer gets once the parallax has settled (Performance mode): the drift
+/// is a mood, not motion, so it stretches to a quarter of the pointer's rate. Every frame of
+/// this view redraws the whole window, which is what keeps a slow laptop warm.
+const TICK_SETTLED_CHEAP: Duration = Duration::from_millis(160);
 /// How long the scene keeps moving after the window loses focus.
 const UNFOCUSED: Duration = Duration::from_secs(10);
 
@@ -1035,7 +1043,16 @@ impl Render for Scene {
         self.view.1 += (self.target.1 - self.view.1) * ease;
         let time = self.clock.at(now).as_secs_f64();
         if run {
-            self.wake(TICK, cx);
+            // While the parallax is still easing it needs every tick; settled, the drift alone
+            // is what moves, and it reads the same at a third of the rate.
+            let settling = (self.target.0 - self.view.0).abs() > 1e-3
+                || (self.target.1 - self.view.1).abs() > 1e-3;
+            let settled = if self.fast {
+                TICK_SETTLED_CHEAP
+            } else {
+                TICK_SETTLED
+            };
+            self.wake(if settling { TICK } else { settled }, cx);
         }
 
         let baked = self.baked.as_ref().expect("baked above");

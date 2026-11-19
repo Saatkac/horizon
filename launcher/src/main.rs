@@ -491,6 +491,14 @@ struct Launcher {
     proxy_input: line_edit::LineEdit,
     proxy_focused: bool,
     proxy_focus: FocusHandle,
+    /// Offline profiles: playing without a Microsoft account (`offline`), and Settings' field
+    /// for a new one.
+    offline: horizon_launcher::offline::Offline,
+    offline_input: line_edit::LineEdit,
+    offline_focused: bool,
+    offline_focus: FocusHandle,
+    /// Why the name typed into Settings' offline field was refused.
+    offline_error: Option<String>,
     /// Opt-in data collection: the player's answer and Settings' section (`collection`).
     collection: collection::Collection,
     /// Settings' "Connect an AI agent" (`agents_page`).

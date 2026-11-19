@@ -5,6 +5,10 @@ use super::*;
 impl Launcher {
     /// The chip's two lines: the name that plays, and how.
     pub(super) fn who_plays(&self) -> (String, &'static str) {
+        // The offline profile plays first: it takes Play until a Microsoft account is chosen.
+        if let Some(name) = self.offline.selected_name() {
+            return (name.to_owned(), tr("Offline profile"));
+        }
         match self.accounts.selected() {
             Some(a) => (a.name.clone(), tr("Microsoft account")),
             None => (String::new(), tr("Sign in with Microsoft")),
@@ -15,9 +19,28 @@ impl Launcher {
         let mut accounts = Accounts::load();
         let done = accounts.play_as(uuid).and_then(|()| accounts.save());
         match done {
-            Ok(()) => self.accounts = accounts,
+            Ok(()) => {
+                self.accounts = accounts;
+                // Choosing a Microsoft account takes Play back from an offline profile.
+                if self.offline.selected_name().is_some() {
+                    self.offline.select(None);
+                    self.offline_error = self.offline.save().err();
+                    self.owner = None;
+                }
+            }
             Err(e) => self.sign_in_state = Some(SignInState::Done(Err(e))),
         }
+        self.account_menu = false;
+    }
+
+    /// Play as an offline profile from now on ([`crate::offline`]): no Microsoft services.
+    pub(super) fn play_as_offline(&mut self, name: &str) {
+        self.offline.select(Some(name));
+        self.offline_error = self.offline.save().err();
+        // The owner gate's screen, or Play's refusal, was for the account: read again.
+        self.owner = None;
+        self.owner_screen_open = false;
+        self.client_error = None;
         self.account_menu = false;
     }
 

@@ -2311,8 +2311,29 @@ pub struct GameSession {
     pub file: Option<PathBuf>,
     /// Why the account plays offline this time, if it does.
     pub offline: Option<String>,
+    /// An offline profile's name, when the game plays as one (`--name`): no session file, and
+    /// the game derives the player's offline UUID from it.
+    pub name: Option<String>,
     /// The other accounts' sessions, for splitscreen players (`account_sessions`).
     pub env: Vec<(&'static str, String)>,
+}
+
+impl GameSession {
+    /// A profile that plays without a Microsoft account ([`crate::offline`]): the game gets the
+    /// name and, from it, vanilla's offline UUID.
+    pub fn as_offline(name: &str) -> Self {
+        Self {
+            name: Some(name.to_owned()),
+            offline: Some(
+                crate::i18n::trf(
+                    "{name} · single player and offline-mode servers only.",
+                    &[("name", name)],
+                )
+                .to_string(),
+            ),
+            ..Self::default()
+        }
+    }
 }
 
 /// The owner gate for the game about to start, then the selected account's session in a file

@@ -311,11 +311,14 @@ impl Launcher {
                     ],
                 ),
                 // Signed out, the button says "Sign in to play": the line says the same.
-                None if self.owner == Some(false)
-                    && !horizon_launcher::developer_offline::selected() =>
+                None if self.play_owner() == Some(false) =>
                 {
                     tr("You haven't played this one yet. Sign in to start.").into()
                 }
+                None if self.offline.selected_name().is_some() => trf(
+                    "You haven't played this one yet. Play starts as the offline profile {name}.",
+                    &[("name", self.offline.selected_name().unwrap_or_default())],
+                ),
                 None => tr("You haven't played this one yet. Press Play to start.").into(),
             },
             (None, None) => String::new(),
@@ -328,10 +331,7 @@ impl Launcher {
                 .child(label)
         };
         let playing = self.playing.map(|count| {
-            let label = format!(
-                "· {}",
-                trf("{count} playing now", &[("count", &thousands(count))])
-            );
+            let label = trf("{count} playing now", &[("count", &thousands(count))]);
             let url = telemetry::stats_url(&self.links.website);
             link("playing-now", label).on_click(move |_: &ClickEvent, _, cx| {
                 if let Some(url) = &url {
@@ -342,12 +342,9 @@ impl Launcher {
         let official = self.official_players.map(|count| {
             link(
                 "official-players",
-                format!(
-                    "· {}",
-                    trf(
-                        "{count} on the official SMP",
-                        &[("count", &thousands(count))]
-                    )
+                trf(
+                    "{count} on the official SMP",
+                    &[("count", &thousands(count))],
                 ),
             )
             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
@@ -363,20 +360,39 @@ impl Launcher {
                 horizon_launcher::developer_install::instance_status(tag, backend::is_prepared(tag))
             });
         // A soft dark scrim keeps the line readable over the brightest sky (a low sun, snow).
-        ui::text(15., FontWeight::NORMAL, ink::STRONG)
+        // The line alone; the player counts the launcher knows sit under it, quieter, so the
+        // hero reads as one sentence and the numbers stay there for whoever looks for them.
+        let counts = div()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap(px(14.))
+            .children(playing)
+            .children(official);
+        div()
+            .flex()
+            .flex_col()
+            .self_start()
             .mt(px(10.))
             .ml(px(-10.))
             .px(px(10.))
             .py(px(6.))
             .rounded(px(radius::CONTROL))
             .bg(gpui::black().opacity(0.28))
-            .self_start()
-            .flex()
-            .flex_wrap()
-            .gap(px(4.))
-            .child(line)
-            .children(playing)
-            .children(official)
+            .child(
+                ui::text(15., FontWeight::NORMAL, ink::STRONG)
+                    .flex()
+                    .flex_wrap()
+                    .gap(px(4.))
+                    .child(line),
+            )
+            .when(self.playing.is_some() || self.official_players.is_some(), |d| {
+                d.child(
+                    ui::text(12.5, FontWeight::NORMAL, 0.55)
+                        .mt(px(2.))
+                        .child(counts),
+                )
+            })
             .children(developer.map(|status| div().w_full().text_color(ui::warn()).child(status)))
     }
 
@@ -619,11 +635,8 @@ impl Launcher {
                         })),
                 ),
             None => {
-                let owner = if horizon_launcher::developer_offline::selected() {
-                    Some(true)
-                } else {
-                    self.owner
-                };
+                // An offline profile needs no owner: Play starts as it.
+                let owner = self.play_owner();
                 // `HORIZON_LAUNCHER_PREVIEW_OWNER=1`: Play as for an owner with the game's files
                 // ready, to drive Build and play in debug builds without a sign-in.
                 let preview = cfg!(debug_assertions)

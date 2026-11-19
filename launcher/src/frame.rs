@@ -1013,7 +1013,9 @@ impl Launcher {
         let open = self.account_menu;
         // Signed out, the chip is only the face: the Sign in with Microsoft button beside it
         // says it once, and the page tabs keep their room.
-        let signed_in = face.is_some() && !tight;
+        // An offline profile names itself in the chip too, beside the Microsoft accounts.
+        let named = face.is_some() || self.offline.selected_name().is_some();
+        let signed_in = named && !tight;
         let chip =
             div()
                 .id("account")
@@ -1075,8 +1077,12 @@ impl Launcher {
             .child(keyboard(chip, &t))
             .children(self.glass_account_menu(cx));
 
-        // Signing in with Microsoft, while nobody is: the mockup's button.
-        let sign_in = self.accounts.selected().is_none().then(|| {
+        // Signing in with Microsoft, while nobody is: the mockup's button. An offline profile
+        // has chosen to play without one, so the button would only crowd the bar: the account
+        // menu offers the Microsoft accounts (and Settings signs in) when they want one.
+        let sign_in = (self.accounts.selected().is_none()
+            && self.offline.selected_name().is_none())
+        .then(|| {
             keyboard(
                 div()
                     .id("topbar-sign-in")
@@ -1255,6 +1261,65 @@ impl Launcher {
                         })
                         .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                             this.play_as(&who);
+                            cx.notify();
+                        })),
+                    id,
+                ),
+                &t,
+            ));
+        }
+        // The offline profiles play beside the Microsoft accounts, in the same menu.
+        for (i, name) in self.offline.profiles.clone().into_iter().enumerate() {
+            let chosen = self.offline.selected_name() == Some(name.as_str());
+            let pick = name.clone();
+            let id = SharedString::from(format!("account-offline-{i}"));
+            menu = menu.child(keyboard(
+                track_hover(
+                    div()
+                        .id(id.clone())
+                        .relative()
+                        .flex()
+                        .items_center()
+                        .gap(px(12.))
+                        .h(px(48.))
+                        .px(px(10.))
+                        .rounded(px(radius::CONTROL))
+                        .cursor_pointer()
+                        .child(hover_layer(&id, white(0.07), radius::CONTROL, 0.))
+                        .child(
+                            div()
+                                .relative()
+                                .size(px(30.))
+                                .rounded(px(8.))
+                                .overflow_hidden()
+                                .bg(white(0.06))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .child(ui::icon("user", 16., white(ink::STRONG))),
+                        )
+                        .child(
+                            div()
+                                .relative()
+                                .flex()
+                                .flex_col()
+                                .flex_1()
+                                .min_w_0()
+                                .child(
+                                    ui::text(14., FontWeight::MEDIUM, ink::FULL)
+                                        .truncate()
+                                        .child(name.clone()),
+                                )
+                                .child(
+                                    ui::text(12., FontWeight::NORMAL, ink::FAINT)
+                                        .child(tr("Offline profile")),
+                                ),
+                        )
+                        .when(chosen, |d| {
+                            d.child(ui::icon("tick-02", 16., ui::color(soft)).relative())
+                        })
+                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            this.play_as_offline(&pick);
                             cx.notify();
                         })),
                     id,

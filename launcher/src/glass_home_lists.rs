@@ -401,8 +401,7 @@ impl Launcher {
             &t,
         );
         // Signed out, Join signs in first, as Play does; otherwise a dimmed Join says why.
-        let signed_out =
-            self.owner == Some(false) && !horizon_launcher::developer_offline::selected();
+        let signed_out = self.play_owner() == Some(false);
         let join = if signed_out && !offline {
             join.tooltip(ui::tip(tr("Sign in to join")))
                 .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
