@@ -125,21 +125,11 @@ pub fn download(
         .and_then(|_| objects(&read_json(&index.path)?, dir))
         .and_then(|objects| {
             log(format!("Downloading the sounds ({} files)", objects.len()));
-            // A connection that fails now and then is tried again, and a file that still fails
-            // does not stop the others: the next download fetches what is left.
-            // As the game's files: a dropped connection (often mid-body) is asked for again.
-            let retrying = |url: &str| {
-                let mut got = fetch(url);
-                for wait in RETRY_WAITS {
-                    if got.is_ok() {
-                        break;
-                    }
-                    std::thread::sleep(wait);
-                    got = fetch(url);
-                }
-                got
-            };
-            fetch_each(&objects, jobs, &retrying, cancel, log, false)
+            // A connection that fails now and then is asked for again inside `fetch_each` (which
+            // every file goes through), and a file that still fails does not stop the others:
+            // the next download fetches what is left. Retrying here as well would multiply the
+            // tries — three there times three here.
+            fetch_each(&objects, jobs, fetch, cancel, log, false)
         });
     match assets {
         Err(e) if e == CANCELLED => return Err(e),

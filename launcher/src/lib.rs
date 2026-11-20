@@ -68,6 +68,7 @@ pub mod update_recovery;
 pub mod wardrobe;
 #[cfg(windows)]
 mod windows_runtime;
+pub mod window_bounds;
 pub mod worlds;
 
 pub mod jars;

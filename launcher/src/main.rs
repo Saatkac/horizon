@@ -479,6 +479,11 @@ struct Launcher {
     /// The window's longer side in points, and the screen's pixels per point: the size pictures
     /// are made at (`picture_cache`).
     window_long_side: f32,
+    /// Where the window was when last seen, and when it last changed: a resize or a move is
+    /// written to Settings once it has settled, so the next start opens here.
+    window_saved: Option<horizon_launcher::window_bounds::SavedBounds>,
+    window_moved_at: Option<Instant>,
+
     scale_factor: f32,
     joining: Option<String>,
     /// Where the next start goes at once: `--world <folder>` or `--server <address>`.

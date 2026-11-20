@@ -2143,6 +2143,21 @@ fn download_for(
     log: &dyn Fn(String),
 ) -> Result<(), String> {
     let v = &pins.version;
+    // One call into Mojang's files, whichever way the gate was passed: the owner's account, or
+    // the player's "download without an account" switch.
+    let download = |who: Option<&str>| {
+        let os = match sources::Os::current() {
+            sources::Os::Linux => "linux",
+            sources::Os::MacOs => "osx",
+            sources::Os::Windows => "windows",
+        };
+        mojang::download(pins, dir, os, 8, fetch, &mojang::CANCEL, log).map_err(|e| match who {
+            Some(name) => {
+                format!("\n  • Horizon tried to download {v} from Mojang for {name}, but: {e}")
+            }
+            None => format!("\n  • Horizon tried to download {v} from Mojang, but: {e}"),
+        })
+    };
     match pass {
         Ok(account::Launch {
             owner: Some((owner, _)),
@@ -2152,14 +2167,7 @@ fn download_for(
             log(format!(
                 "{name} owns Minecraft: downloading {v} from Mojang"
             ));
-            let os = match sources::Os::current() {
-                sources::Os::Linux => "linux",
-                sources::Os::MacOs => "osx",
-                sources::Os::Windows => "windows",
-            };
-            mojang::download(pins, dir, os, 8, fetch, &mojang::CANCEL, log).map_err(|e| {
-                format!("\n  • Horizon tried to download {v} from Mojang for {name}, but: {e}")
-            })
+            download(Some(&name))
         }
         // An owner by its last answer, who can't be asked now.
         Ok(pass) => Err(format!(
@@ -2167,23 +2175,17 @@ fn download_for(
              checked: {}",
             pass.offline.unwrap_or_default()
         )),
-        Err(_) if signed_in => Err(
-            "\n  • No signed-in account owns Minecraft: Java Edition, so Horizon can't download it."
-                .into(),
-        ),
         Err(_) if crate::backend::Settings::load().download_without_account() => {
             log(format!(
                 "Downloading {v} from Mojang without an account (the player turned the \
                  ownership check off)"
             ));
-            let os = match sources::Os::current() {
-                sources::Os::Linux => "linux",
-                sources::Os::MacOs => "osx",
-                sources::Os::Windows => "windows",
-            };
-            mojang::download(pins, dir, os, 8, fetch, &mojang::CANCEL, log)
-                .map_err(|e| format!("\n  • Horizon tried to download {v} from Mojang, but: {e}"))
+            download(None)
         }
+        Err(_) if signed_in => Err(
+            "\n  • No signed-in account owns Minecraft: Java Edition, so Horizon can't download it."
+                .into(),
+        ),
         Err(_) => Err(crate::i18n::trf(
             "\n  • Sign in with a Microsoft account that owns Minecraft: Java Edition to download \
              {version} from Mojang, or turn on “Download without an account” in Settings › Game.",
@@ -4330,6 +4332,11 @@ pub struct Settings {
     /// move even when the system asks for less.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reduce_motion: Option<bool>,
+    /// Where the window was last: its rectangle in logical pixels, or `maximized`. Unset opens
+    /// it at the default size, centred. The launcher writes it as the player resizes or moves
+    /// the window, so the next start is where they left off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window: Option<crate::window_bounds::SavedBounds>,
     /// Download Minecraft's files from Mojang without a Microsoft account. Mojang's files are
     /// public HTTP; Horizon asks for an account that owns the game as policy, and a player
     /// without one can turn that policy off here. Off (unset) by default.
@@ -4434,7 +4441,7 @@ impl Settings {
 
     /// Whether to download the game's files without an account that owns it. On by default in
     /// this build: its player plays offline, and Mojang's files are public downloads anyway.
-    /// `HORIZON_DOWNLOAD_WITHOUT_ACCOUNT=0` turns it off for a run.
+    /// Settings > Game turns it off, and `HORIZON_DOWNLOAD_WITHOUT_ACCOUNT=0` for a run.
     pub fn download_without_account(&self) -> bool {
         match std::env::var_os("HORIZON_DOWNLOAD_WITHOUT_ACCOUNT").as_deref() {
             Some(v) if v == "0" => return false,
@@ -4642,6 +4649,9 @@ mod tests {
     /// the developer option (`Settings::dev_offline`), whose pass has no owner.
     #[test]
     fn mojang_downloads_only_for_an_owner() {
+        // This build lets a player download without an account (Settings > Game, on by default
+        // here). The policy this test pins is the one that holds with that switch off.
+        std::env::set_var("HORIZON_DOWNLOAD_WITHOUT_ACCOUNT", "0");
         let dir = std::env::temp_dir().join(format!("horizon-owner-only-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         let pins = sources::Pins::read(&serde_json::json!({ "minecraft": {
@@ -4675,7 +4685,7 @@ mod tests {
              \n  • Or choose the folder where your launcher keeps Minecraft 26.3 (Minecraft \
              folder › Choose… in the launcher, --minecraft on the command line).\
              \n  • Sign in with a Microsoft account that owns Minecraft: Java Edition to download \
-             26.3 from Mojang."
+             26.3 from Mojang, or turn on “Download without an account” in Settings › Game."
         );
         let no_owner = || Ok(account::Launch::default());
         for (pass, signed_in) in [
@@ -4719,6 +4729,8 @@ mod tests {
         }
         assert!(asked.lock().unwrap().is_empty());
         let _ = fs::remove_dir_all(&dir);
+        // The switch is the test process's, and other tests run beside it.
+        std::env::remove_var("HORIZON_DOWNLOAD_WITHOUT_ACCOUNT");
 
         // In the sources: one call downloads the game, in `download_for`, and the only caller
         // of that asks the strict gate. Game-file hosts appear nowhere else.

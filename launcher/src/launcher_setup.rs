@@ -2,6 +2,11 @@
 //! launcher's own updates and the release list.
 use super::*;
 
+/// How often the message loop runs while a job is under way, and while nothing is: see
+/// [`Launcher::new`].
+const BUSY_POLL: Duration = Duration::from_millis(50);
+const IDLE_POLL: Duration = Duration::from_millis(500);
+
 impl Launcher {
     pub(crate) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         horizon_launcher::game_shader_api::draws_here();
@@ -13,13 +18,22 @@ impl Launcher {
         });
         let window_handle = window.window_handle();
         // Messages from the workers (progress, installs, the game's log) and the periodic checks.
-        // 200 ms is quick enough that a download's bar still moves smoothly, and it wakes the
-        // app a third as often as 80 ms did: on a laptop that is the difference between a core
-        // that stays in a low power state and one that keeps waking for nothing.
+        //
+        // The wait adapts: 50 ms while a job is running (an install, a preparation, the game
+        // starting) so a progress bar moves smoothly and Play feels instant, and half a second
+        // once nothing is happening — a launcher sitting on Home then wakes twice a second
+        // instead of twelve times, which is what keeps a laptop's core in its low power state.
         cx.spawn(async move |this, cx| loop {
-            cx.background_executor()
-                .timer(Duration::from_millis(200))
-                .await;
+            let busy = this
+                .update(cx, |this, _| {
+                    this.installing.is_some()
+                        || this.preparing
+                        || this.starting_client.is_some()
+                        || this.client.is_some()
+                })
+                .unwrap_or(false);
+            let wait = if busy { BUSY_POLL } else { IDLE_POLL };
+            cx.background_executor().timer(wait).await;
             if this
                 .update(cx, |this, cx| this.drain(window_handle, cx))
                 .is_err()
@@ -222,6 +236,8 @@ impl Launcher {
             friend_focused: false,
             window_width: 0.,
             window_long_side: 0.,
+            window_saved: None,
+            window_moved_at: None,
             scale_factor: 1.,
             friend_focus: cx.focus_handle(),
             joining: None,
@@ -599,5 +615,39 @@ impl Launcher {
         std::thread::spawn(move || {
             let _ = tx.send(Msg::Links(backend::links()));
         });
+    }
+}
+
+impl Launcher {
+    /// Remembers where the window is, writing it once the player has stopped moving or resizing
+    /// it for a moment (a drag would otherwise save on every frame).
+    pub(crate) fn note_window_bounds(&mut self, window: &Window) {
+        let Some(bounds) = horizon_launcher::window_bounds::SavedBounds::of(window.window_bounds())
+        else {
+            return;
+        };
+        if self.window_saved != Some(bounds) {
+            self.window_saved = Some(bounds);
+            self.window_moved_at = Some(Instant::now());
+        }
+    }
+
+    /// Writes the window's place once it has settled: called from the message loop.
+    pub(crate) fn save_window_bounds(&mut self) {
+        let Some(at) = self.window_moved_at else {
+            return;
+        };
+        if at.elapsed() < Duration::from_millis(900) {
+            return;
+        }
+        self.window_moved_at = None;
+        let Some(bounds) = self.window_saved else {
+            return;
+        };
+        if self.settings.window == Some(bounds) {
+            return;
+        }
+        self.settings.window = Some(bounds);
+        self.save_settings();
     }
 }

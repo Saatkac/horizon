@@ -42,6 +42,7 @@ impl Render for Launcher {
         let rains = self.theme.dark && self.theme.edge.is_some() && !performance;
         let accent = self.look.accent;
         self.scale = window.scale_factor();
+        self.note_window_bounds(window);
         self.perf.frame();
         if self.bench.as_ref().is_some_and(perf::Bench::scrolling) {
             self.bench_scroll(window);

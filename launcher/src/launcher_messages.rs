@@ -508,6 +508,7 @@ impl Launcher {
                 changed = true;
             }
         }
+        self.save_window_bounds();
         if self
             .checked
             .is_some_and(|at| at.elapsed() > backend::CHECK_EVERY)

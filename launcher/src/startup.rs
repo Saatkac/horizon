@@ -125,10 +125,20 @@ fn run_launcher() {
             }
             #[cfg(not(windows))]
             let _ = setup_window;
-            let bounds = Bounds::centered(None, size(px(1180.), px(760.)), cx);
+            // Where the player left the window last time, else the default size, centred.
+            let bounds = crate::backend::Settings::load()
+                .window
+                .map(|saved| saved.to_gpui(cx))
+                .unwrap_or_else(|| {
+                    WindowBounds::Windowed(Bounds::centered(
+                        None,
+                        size(px(1180.), px(760.)),
+                        cx,
+                    ))
+                });
             cx.open_window(
                 WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    window_bounds: Some(bounds),
                     window_min_size: Some(size(px(960.), px(600.))),
                     titlebar: Some(titlebar::options()),
                     #[cfg(target_os = "linux")]

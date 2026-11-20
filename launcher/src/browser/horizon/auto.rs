@@ -260,6 +260,15 @@ fn keep(home: &Path, entry: &installed::Entry) -> Result<Kept, String> {
     Ok(kept)
 }
 
+/// Whether the browser's list for `home` has anything from Horizon's registry: the only mods
+/// [`run`] ever updates, and a local file read.
+fn has_registry_mods(home: &Path) -> bool {
+    installed::Installed::load(home)
+        .entries
+        .iter()
+        .any(|e| e.source == SourceId::Horizon)
+}
+
 /// Updates every installed registry project of game folder `home` that [`decide`] says, by the
 /// index (fetched at most every ten minutes); None when updates are disabled or it can't be read.
 /// An interrupted update is recovered first, even when updates are disabled or offline.
@@ -274,6 +283,12 @@ pub fn run(
     let _one = ONE.lock().unwrap_or_else(|e| e.into_inner());
     recover(home);
     if !enabled {
+        return None;
+    }
+    // Nothing from the registry is installed here: there is nothing to update, and asking the
+    // registry for its index would put a network round trip in front of Play, which is the one
+    // place a player feels a delay. The list is a local file, so this costs one read.
+    if !has_registry_mods(home) {
         return None;
     }
     let index = super::index().ok()?;
